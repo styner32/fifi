@@ -84,7 +84,7 @@ make dart-filing-cli-companies
 go run ./cmd/dart-filing-worker-cli companies
 
 # 2. 특정 기업 공시 수집 및 AI 분석 저장 (예: 삼성전자 corp_code="00126380", 최근 5건)
-make dart-filing-cli CORP_CODE="00126380" LIMIT=5
+make dart-filing-cli-company CORP_CODE="00126380" LIMIT=5
 # 또는
 go run ./cmd/dart-filing-worker-cli company 00126380 5
 
@@ -92,6 +92,8 @@ go run ./cmd/dart-filing-worker-cli company 00126380 5
 go run ./cmd/dart-filing-worker-cli reports
 
 # 4. 단일 공시 건 AI 분석 Dry-run 테스트 (DB 미저장)
+make dart-filing-cli RECEIPT_NO="20240321000725"
+# 또는
 go run ./cmd/dart-filing-worker-cli dry-run 20240321000725
 ```
 
