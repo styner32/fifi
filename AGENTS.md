@@ -1,4 +1,52 @@
-# Project Notes
+# Project Context: fifi (Financial & Trading Platform)
+
+This file documents the project's technology stack, architectural decisions, development preferences, and domain rules for AI assistants.
+
+## Tech Stack & Architecture
+
+### Backend
+- **Language:** Go (v1.26)
+- **Web Framework:** Gin
+- **Database:** PostgreSQL (GORM ORM, `golang-migrate`)
+- **Job Queue:** Asynq (Redis-backed)
+- **Testing:** Ginkgo & Gomega
+- **AI/LLM:** OpenAI API (`openai-go`)
+- **HTML/XBRL Parsing:** goquery
+
+### Frontend (`web/`)
+- **Language:** TypeScript
+- **Framework:** React SPA (Vite)
+- **Dev Server:** `npm --prefix web run dev` (`make dart-filing-web`)
+- **Build Tool:** `npm --prefix web run build` (`make dart-filing-web-build`)
+
+### Submodules (`external/`)
+- **open-trading-api:** `external/open-trading-api` (Submodule tracking `https://github.com/koreainvestment/open-trading-api.git`)
+
+### Infrastructure & Tools
+- **Containerization:** Docker Compose (PostgreSQL 18, Redis Stack)
+- **Migrations:** `golang-migrate` (`make migrate-up`)
+- **Task Runner:** Makefile
+
+## Development Preferences
+
+### Scripting & Ad-hoc Tasks
+- **Language:** Ruby / Go CLI
+- **Use Case:** Use Go CLI tools (`cmd/agent`, `cmd/dart-filing-worker-cli`) or Ruby for utility scripts and data automation.
+
+### Testing
+- **Unit & Integration:** Go standard testing + Ginkgo/Gomega (`make test` / `go test ./...`).
+
+## Project Structure
+- `cmd/`: Entry points for applications (`main.go`, `agent/`, `dart-filing-api/`, `dart-filing-worker/`, `dart-filing-worker-cli/`, `dart-filing-mcp/`).
+- `internal/`: Core business logic (`domesticstock/`, `domesticfutureoption/`, `companyanalysis/`, `dcf/`, `dartfiling/`, `kosis/`, `db/`).
+- `web/`: Vite + React TypeScript SPA frontend.
+- `external/`: External reference submodules (`external/open-trading-api`).
+- `docs/`: Technical documentation and CLI guides.
+- `bin/`: Compiled binaries.
+
+---
+
+# Domain & Implementation Rules
 
 ## KOSPI Master (`kospi_code.mst`)
 
@@ -15,8 +63,8 @@
 ## Go Implementation Rules
 
 - Relevant code:
-  - `go/internal/domesticstock/market_status.go`
-  - `go/cmd/main.go`
+  - `internal/domesticstock/market_snapshot.go`
+  - `cmd/main.go`
 - The Go code must cache the KOSPI master by business date.
 - `KOSPI_MASTER_CACHE_FILE` is the base path, not the final dated filename.
 - The resolved master cache path format is:
@@ -68,8 +116,8 @@
 
 - Download URL: `https://new.real.download.dws.co.kr/common/master/fo_idx_code_mts.mst.zip`
 - Relevant code:
-  - `go/internal/domesticfutureoption/service.go`
-  - `go/cmd/main.go`
+  - `internal/domesticfutureoption/service.go`
+  - `cmd/main.go`
 - Treat `fo_idx_code_mts.mst` as a business-date-sensitive master file for domestic index futures/options contract resolution.
 - The Go code caches this master by business date.
 - `INDEX_FUTURE_MASTER_CACHE_FILE` is the base path, not the final dated filename.
@@ -92,18 +140,18 @@
   - endpoint status (`ok`, `error`, `business_error`, `nil`)
   - `msg_cd`, `msg1`
   - raw response body when available
-- `inquire-time-fuopccnl` and `inquire-member` in `go/internal/domesticfutureoption/service.go` are currently experimental wrappers:
+- `inquire-time-fuopccnl` and `inquire-member` in `internal/domesticfutureoption/service.go` are currently experimental wrappers:
   - they use `FID_INPUT_ISCD`
   - they also send `FID_COND_MRKT_DIV_CODE` when provided
-  - keep them non-fatal in `go/cmd/main.go` until verified against an official sample or production response
+  - keep them non-fatal in `cmd/main.go` until verified against an official sample or production response
 
 ## DCF Notes
 
 - Relevant code:
-  - `go/internal/domesticstock/dcf_readiness.go`
-  - `go/internal/domesticstock/dcf_valuation.go`
-  - `go/internal/dcf/engine.go`
-  - `go/DCF_DATA_MAP.md`
+  - `internal/domesticstock/dcf_readiness.go`
+  - `internal/domesticstock/dcf_valuation.go`
+  - `internal/dcf/engine.go`
+  - `docs/DCF_DATA_MAP.md`
 - Do not treat all DCF inputs as equally reliable.
 - Current implementation tiers are:
   - `exact`: directly from KIS response fields
@@ -118,9 +166,13 @@
   - `CostOfDebt`: proxy via non-operating expense and debt proxy, with assumption fallback
 - Treat DCF enterprise/equity values as `억원`-scaled financial values unless a different normalization layer is added.
 - Final `TargetPrice` must be normalized to `KRW/share` before comparing with `stck_prpr`.
-- Advanced engine features now live in `go/internal/dcf/advanced.go`:
+- Advanced engine features now live in `internal/dcf/advanced.go`:
   - `ReverseDCF`
   - `MonteCarlo`
-- `MonteCarlo` JSON export is written from `go/cmd/main.go` via `go/internal/dcf/export.go`
+- `MonteCarlo` JSON export is written from `cmd/main.go` via `internal/dcf/export.go`
 - `DCF_MONTE_CARLO_JSON_FILE` is a base path; the runnable example resolves it to a business-date and symbol scoped JSON filename.
 - If you change DCF logic, keep the distinction between `exact`, `derived`, and `assumed` visible in code and output.
+
+## Git Commit Rule
+- **Do not create git commits without explicit user request.**
+- Only modify or edit files in the workspace. Let the user review and create commits manually, unless the user explicitly requests a git commit.

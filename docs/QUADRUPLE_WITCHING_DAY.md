@@ -384,7 +384,7 @@ WebSocket: 최대 40개 종목 동시 구독
 ## 9. 프로젝트 구조 (권장)
 
 ```text
-go/
+.
 ├── cmd/
 │   ├── main.go                    # bootstrap (.env 로드 + runApp 호출)
 │   ├── app.go                     # quad witching 포함 전체 실행 orchestration

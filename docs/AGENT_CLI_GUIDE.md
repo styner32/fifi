@@ -1,6 +1,6 @@
 # Agent CLI Guide (`go run ./cmd/agent report`)
 
-This guide documents the newly added agent report CLI commands under [`go/cmd/agent`](/Users/sunjinlee/workspace/open-trading-api/go/cmd/agent). These commands provide real-time market risk diagnostics, leverage indicators, vulnerability metrics, and technical indicators.
+This guide documents the newly added agent report CLI commands under [`cmd/agent`](../cmd/agent). These commands provide real-time market risk diagnostics, leverage indicators, vulnerability metrics, and technical indicators.
 
 ---
 

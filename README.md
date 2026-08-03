@@ -46,6 +46,14 @@
 git submodule update --init --recursive
 ```
 
+상위 원본 레포지토리의 최신 `main` 커밋으로 업데이트하려면 아래 명령어를 사용합니다:
+
+```bash
+make submodule-update
+# 또는
+git submodule update --remote --merge external/open-trading-api
+```
+
 ---
 
 ## 실행 및 테스트 (Run & Test)

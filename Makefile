@@ -3,11 +3,13 @@ DATABASE_URL ?= postgresql://sunjinlee@localhost:5432/dart?sslmode=disable
 TEST_DATABASE_URL ?= postgresql://sunjinlee@localhost:5432/dart_test?sslmode=disable
 MIGRATIONS_DIR ?= internal/db/migrations
 
-.PHONY: run build test takesnapshot creditbalance now dart-filing-cli dart-filing-cli-companies dart-filing-cli-company dart-filing-api dart-filing-worker dart-filing-web dart-filing-web-build migrate-up migrate-down migrate-create migrate-test-redo
+.PHONY: run build test takesnapshot creditbalance now dart-filing-cli dart-filing-cli-companies dart-filing-cli-company dart-filing-api dart-filing-worker dart-filing-web dart-filing-web-build migrate-up migrate-down migrate-create migrate-test-redo submodule-update
+
+submodule-update: ## Update external/open-trading-api submodule to latest main
+	git submodule update --remote --merge external/open-trading-api
 
 now:
 	go run ./cmd/agent report intraday-pulse
-
 
 run: ## Run the app: go run
 	go run ./$(CMD_DIR)

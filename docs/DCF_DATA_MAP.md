@@ -5,11 +5,11 @@
 The current Go implementation can now build a practical end-to-end DCF valuation from KIS domestic stock APIs plus a small assumption layer.
 
 Implemented code:
-- `go/internal/domesticstock/dcf_readiness.go`
-- `go/internal/domesticstock/dcf_valuation.go`
-- `go/internal/dcf/engine.go`
-- `go/internal/dcf/advanced.go`
-- `go/cmd/main.go`
+- `internal/domesticstock/dcf_readiness.go`
+- `internal/domesticstock/dcf_valuation.go`
+- `internal/dcf/engine.go`
+- `internal/dcf/advanced.go`
+- `cmd/main.go`
 
 ## Input Mapping
 
