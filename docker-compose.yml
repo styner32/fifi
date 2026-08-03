@@ -35,12 +35,12 @@ services:
 
   dart-filing-api:
     build:
-      context: ./go
+      context: .
       dockerfile: Dockerfile_dart_filing_api
     ports:
       - "8080:8080"
     env_file:
-      - ./go/.env
+      - .env.docker
     networks:
       - open-trading-network
     depends_on:
