@@ -1,77 +1,66 @@
 package main
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestValidateDate(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-		wantErr  bool
-	}{
-		{"2026-07-05", "20260705", false},
-		{"20260705", "20260705", false},
-		{"", "", false},
-		{"2026-07-0", "", true},
-		{"abcd-ef-gh", "", true},
-	}
+var _ = Describe("Agent CLI Options", func() {
+	Context("validateDate", func() {
+		It("normalizes valid YYYY-MM-DD and YYYYMMDD dates", func() {
+			Expect(validateDate("2026-07-05")).To(Equal("20260705"))
+			Expect(validateDate("20260705")).To(Equal("20260705"))
+			Expect(validateDate("")).To(Equal(""))
+		})
 
-	for _, tc := range tests {
-		got, err := validateDate(tc.input)
-		if (err != nil) != tc.wantErr {
-			t.Errorf("validateDate(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
-		}
-		if got != tc.expected {
-			t.Errorf("validateDate(%q) = %q, want %q", tc.input, got, tc.expected)
-		}
-	}
-}
+		It("returns an error for invalid date formats", func() {
+			_, err := validateDate("2026-07-0")
+			Expect(err).To(HaveOccurred())
 
-func TestValidateSidecar(t *testing.T) {
-	tests := []struct {
-		input   string
-		wantErr bool
-	}{
-		{"triggered", false},
-		{"not-triggered", false},
-		{"unknown", false},
-		{"", false},
-		{"invalid-status", true},
-	}
+			_, err = validateDate("abcd-ef-gh")
+			Expect(err).To(HaveOccurred())
+		})
+	})
 
-	for _, tc := range tests {
-		err := validateSidecar(tc.input)
-		if (err != nil) != tc.wantErr {
-			t.Errorf("validateSidecar(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
-		}
-	}
-}
+	Context("validateSidecar", func() {
+		It("accepts valid sidecar status strings", func() {
+			Expect(validateSidecar("triggered")).To(Succeed())
+			Expect(validateSidecar("not-triggered")).To(Succeed())
+			Expect(validateSidecar("unknown")).To(Succeed())
+			Expect(validateSidecar("")).To(Succeed())
+		})
 
-func TestParseOptionalFloat(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected *float64
-		wantErr  bool
-	}{
-		{"", nil, false},
-		{"1,234.56", floatPointer(1234.56), false},
-		{"invalid", nil, true},
-	}
+		It("rejects invalid sidecar status strings", func() {
+			Expect(validateSidecar("invalid-status")).To(HaveOccurred())
+		})
+	})
 
-	for _, tc := range tests {
-		got, err := parseOptionalFloat(tc.input, "test")
-		if (err != nil) != tc.wantErr {
-			t.Errorf("parseOptionalFloat(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
-		}
-		if !tc.wantErr && tc.expected != nil {
-			if got == nil || *got != *tc.expected {
-				t.Errorf("parseOptionalFloat(%q) = %v, want %v", tc.input, got, tc.expected)
-			}
-		}
-	}
-}
+	Context("parseOptionalFloat", func() {
+		It("parses optional floats and empty strings correctly", func() {
+			v, err := parseOptionalFloat("", "test")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(v).To(BeNil())
 
-func floatPointer(v float64) *float64 {
-	return &v
-}
+			v, err = parseOptionalFloat("1,234.56", "test")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(v).NotTo(BeNil())
+			Expect(*v).To(Equal(1234.56))
+		})
+
+		It("returns error for invalid float inputs", func() {
+			_, err := parseOptionalFloat("invalid", "test")
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Context("parseOptions", func() {
+		It("parses CLI flags into snapshot options", func() {
+			opts, err := parseOptions([]string{"--date", "2026-08-04", "--sidecar-status", "triggered", "--semiconductor-foreign-net-sell-eok", "1,200.5"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(opts.Date).To(Equal("20260804"))
+			Expect(opts.SidecarStatus).To(Equal("triggered"))
+			Expect(opts.SemiconductorForeignNetSellEok).NotTo(BeNil())
+			Expect(*opts.SemiconductorForeignNetSellEok).To(Equal(1200.5))
+		})
+	})
+})

@@ -3,21 +3,24 @@ package yahoo
 import (
 	"context"
 	"net/http"
-	"strings"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/fifi/internal/testhelpers"
 )
 
-func TestClientGetQuotes(t *testing.T) {
-	transport := testhelpers.NewMockTransport()
-	
-	// Mock ^N225
-	transport.New("https://example.test").
-		Get("/v8/finance/chart/%5EN225?interval=1d&range=1d").
-		MatchHeader("User-Agent", "unit-test").
-		Reply(http.StatusOK).
-		BodyString(`{
+var _ = Describe("Yahoo Client", func() {
+	Context("GetQuotes", func() {
+		It("fetches multiple market quotes concurrently", func() {
+			transport := testhelpers.NewMockTransport()
+
+			// Mock ^N225
+			transport.New("https://example.test").
+				Get("/v8/finance/chart/%5EN225?interval=1d&range=1d").
+				MatchHeader("User-Agent", "unit-test").
+				Reply(http.StatusOK).
+				BodyString(`{
   "chart": {
     "result": [
       {
@@ -33,12 +36,12 @@ func TestClientGetQuotes(t *testing.T) {
   }
 }`)
 
-	// Mock NQ=F
-	transport.New("https://example.test").
-		Get("/v8/finance/chart/NQ%3DF?interval=1d&range=1d").
-		MatchHeader("User-Agent", "unit-test").
-		Reply(http.StatusOK).
-		BodyString(`{
+			// Mock NQ=F
+			transport.New("https://example.test").
+				Get("/v8/finance/chart/NQ%3DF?interval=1d&range=1d").
+				MatchHeader("User-Agent", "unit-test").
+				Reply(http.StatusOK).
+				BodyString(`{
   "chart": {
     "result": [
       {
@@ -54,34 +57,26 @@ func TestClientGetQuotes(t *testing.T) {
   }
 }`)
 
-	client := NewClient(&http.Client{Transport: transport}, Config{
-		BaseURL:   "https://example.test",
-		UserAgent: "unit-test",
-	})
-	quotes, err := client.GetQuotes(context.Background(), []string{"^N225", "NQ=F"})
-	if err != nil {
-		t.Fatalf("GetQuotes() error = %v", err)
-	}
-	if quotes["^N225"].Price != 38500.25 {
-		t.Fatalf("N225 price = %v", quotes["^N225"].Price)
-	}
-	
-	// Change percent for NQ=F: (18200 - 18100) / 18100 * 100 = 0.552486...
-	change := quotes["NQ=F"].ChangePercent
-	if change < 0.55 || change > 0.56 {
-		t.Fatalf("NQ=F change = %v", quotes["NQ=F"].ChangePercent)
-	}
-	if err := transport.Verify(); err != nil {
-		t.Fatal(err)
-	}
-}
+			client := NewClient(&http.Client{Transport: transport}, Config{
+				BaseURL:   "https://example.test",
+				UserAgent: "unit-test",
+			})
+			quotes, err := client.GetQuotes(context.Background(), []string{"^N225", "NQ=F"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(quotes["^N225"].Price).To(Equal(38500.25))
 
-func TestClientGetQuotesReturnsPartialMissingSymbolError(t *testing.T) {
-	transport := testhelpers.NewMockTransport()
-	transport.New("https://example.test").
-		Get("/v8/finance/chart/KRW%3DX?interval=1d&range=1d").
-		Reply(http.StatusOK).
-		BodyString(`{
+			change := quotes["NQ=F"].ChangePercent
+			Expect(change).To(BeNumerically(">=", 0.55))
+			Expect(change).To(BeNumerically("<=", 0.56))
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		It("returns partial quotes and error when some symbols fail", func() {
+			transport := testhelpers.NewMockTransport()
+			transport.New("https://example.test").
+				Get("/v8/finance/chart/KRW%3DX?interval=1d&range=1d").
+				Reply(http.StatusOK).
+				BodyString(`{
   "chart": {
     "result": [
       {
@@ -96,21 +91,18 @@ func TestClientGetQuotesReturnsPartialMissingSymbolError(t *testing.T) {
   }
 }`)
 
-	// ^TNX will fail with 404
-	transport.New("https://example.test").
-		Get("/v8/finance/chart/%5ETNX?interval=1d&range=1d").
-		Reply(http.StatusNotFound).
-		BodyString(`Not Found`)
+			// ^TNX will fail with 404
+			transport.New("https://example.test").
+				Get("/v8/finance/chart/%5ETNX?interval=1d&range=1d").
+				Reply(http.StatusNotFound).
+				BodyString(`Not Found`)
 
-	client := NewClient(&http.Client{Transport: transport}, Config{BaseURL: "https://example.test"})
-	quotes, err := client.GetQuotes(context.Background(), []string{"KRW=X", "^TNX"})
-	if err == nil || !strings.Contains(err.Error(), "^TNX") {
-		t.Fatalf("GetQuotes() error = %v, want missing ^TNX", err)
-	}
-	if _, ok := quotes["KRW=X"]; !ok {
-		t.Fatalf("partial KRW=X quote missing")
-	}
-	if err := transport.Verify(); err != nil {
-		t.Fatal(err)
-	}
-}
+			client := NewClient(&http.Client{Transport: transport}, Config{BaseURL: "https://example.test"})
+			quotes, err := client.GetQuotes(context.Background(), []string{"KRW=X", "^TNX"})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("^TNX"))
+			Expect(quotes).To(HaveKey("KRW=X"))
+			Expect(transport.Verify()).To(Succeed())
+		})
+	})
+})

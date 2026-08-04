@@ -121,58 +121,62 @@ func fillProgramTradeToday(ctx context.Context, deps Deps, sec *LateSessionSecti
 	rowsList := rows(resp, "output1")
 
 	var foreignMatched, organMatched, totalMatched bool
-	var individualEok float64
-	var individualFound bool
+	var sumAbt, sumNabt float64
 
 	for _, row := range rowsList {
 		nameVal, ok := row["invr_cls_name"].(string)
 		if !ok {
 			continue
 		}
-		netAmt, ok := num(row, "nabt_ntby_amt") // 비차익 순매수 금액 (백만 원 단위)
-		if !ok {
-			continue
-		}
-		netAmtEok := netAmt / 100.0
-
 		name := strings.TrimSpace(nameVal)
+
+		abtAmt, _ := num(row, "abt_ntby_amt")   // 차익 (백만 원 단위)
+		nabtAmt, _ := num(row, "nabt_ntby_amt") // 비차익 (백만 원 단위)
+
+		abtEok := abtAmt / 100.0
+		nabtEok := nabtAmt / 100.0
+
 		switch {
 		case strings.Contains(name, "외국인"):
-			sec.KOSPINetNonArbitrageForeign = netAmtEok
+			sec.KOSPINetNonArbitrageForeign = nabtEok
 			foreignMatched = true
+			sumAbt += abtEok
+			sumNabt += nabtEok
 		case strings.Contains(name, "기관"):
-			sec.KOSPINetNonArbitrageOrgan = netAmtEok
+			sec.KOSPINetNonArbitrageOrgan = nabtEok
 			organMatched = true
-		case strings.Contains(name, "개인") || strings.Contains(name, "일반"):
-			individualEok = netAmtEok
-			individualFound = true
+			sumAbt += abtEok
+			sumNabt += nabtEok
+		case strings.Contains(name, "개인") || strings.Contains(name, "일반") || strings.Contains(name, "기타"):
+			sumAbt += abtEok
+			sumNabt += nabtEok
 		case name == "계" || strings.Contains(name, "합계") || strings.Contains(name, "전체"):
-			sec.KOSPINetNonArbitrageTotal = netAmtEok
+			sec.KOSPINetArbitrageTotal = abtEok
+			sec.KOSPINetNonArbitrageTotal = nabtEok
+			sec.KOSPIProgramTotalNet = abtEok + nabtEok
 			totalMatched = true
 		default:
-			fmt.Printf("[latesession] Warning: unmatched invr_cls_name '%s' (nabt_ntby_amt=%.0f)\n", name, netAmt)
+			sumAbt += abtEok
+			sumNabt += nabtEok
 		}
 	}
 
-	if !organMatched || !totalMatched {
+	if !totalMatched {
+		sec.KOSPINetArbitrageTotal = sumAbt
+		sec.KOSPINetNonArbitrageTotal = sumNabt
+		sec.KOSPIProgramTotalNet = sumAbt + sumNabt
+	}
+
+	if (!foreignMatched || !organMatched || !totalMatched) && (sec.KOSPINetArbitrageTotal == 0 && sec.KOSPINetNonArbitrageTotal == 0) {
 		sec.ProgramReconciledStatus = "NOT_RECONCILED"
 	} else {
 		sec.ProgramReconciledStatus = "RECONCILED"
 	}
 
-	// Fallback: Total 미매칭 시 개별 합산으로 보정
-	if !totalMatched && (foreignMatched || organMatched) {
-		computed := sec.KOSPINetNonArbitrageForeign + sec.KOSPINetNonArbitrageOrgan
-		if individualFound {
-			computed += individualEok
-		}
-		sec.KOSPINetNonArbitrageTotal = computed
-		fmt.Printf("[latesession] Warning: '합계'/'전체' row not found, computed total=%.0f from components (foreign=%.0f organ=%.0f individual=%.0f)\n",
-			computed, sec.KOSPINetNonArbitrageForeign, sec.KOSPINetNonArbitrageOrgan, individualEok)
-	}
 
 	return nil
 }
+
 
 func fillLateProgramFlow(ctx context.Context, deps Deps, sec *LateSessionSection, opts Options) error {
 	var p1500, p1520, p1530 float64

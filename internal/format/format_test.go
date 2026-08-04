@@ -1,116 +1,66 @@
 package format
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestNumber(t *testing.T) {
-	tests := []struct {
-		val      float64
-		decimals int
-		expected string
-	}{
-		{1234567.89, 2, "1,234,567.89"},
-		{-1234567.89, 2, "-1,234,567.89"},
-		{1234.5678, 3, "1,234.568"},
-		{123, 0, "123"},
-		{0.0, 1, "0.0"},
-	}
+var _ = Describe("Format Package Helpers", func() {
+	Context("Number", func() {
+		It("formats floats with specified decimal places and thousand separators", func() {
+			Expect(Number(1234567.89, 2)).To(Equal("1,234,567.89"))
+			Expect(Number(-1234567.89, 2)).To(Equal("-1,234,567.89"))
+			Expect(Number(1234.5678, 3)).To(Equal("1,234.568"))
+			Expect(Number(123, 0)).To(Equal("123"))
+			Expect(Number(0.0, 1)).To(Equal("0.0"))
+		})
+	})
 
-	for _, tt := range tests {
-		got := Number(tt.val, tt.decimals)
-		if got != tt.expected {
-			t.Errorf("Number(%v, %v) = %q; expected %q", tt.val, tt.decimals, got, tt.expected)
-		}
-	}
-}
+	Context("Signed", func() {
+		It("adds explicit positive or negative signs", func() {
+			Expect(Signed(123.4, 1)).To(Equal("+123.4"))
+			Expect(Signed(-123.4, 1)).To(Equal("-123.4"))
+			Expect(Signed(0, 1)).To(Equal("0.0"))
+		})
+	})
 
-func TestSigned(t *testing.T) {
-	if got := Signed(123.4, 1); got != "+123.4" {
-		t.Errorf("Signed(123.4, 1) = %q, expected \"+123.4\"", got)
-	}
-	if got := Signed(-123.4, 1); got != "-123.4" {
-		t.Errorf("Signed(-123.4, 1) = %q, expected \"-123.4\"", got)
-	}
-	if got := Signed(0, 1); got != "0.0" {
-		t.Errorf("Signed(0, 1) = %q, expected \"0.0\"", got)
-	}
-}
+	Context("Percent and PercentPlain", func() {
+		It("formats percent strings with and without signs", func() {
+			Expect(Percent(1.234)).To(Equal("+1.23%"))
+			Expect(Percent(-1.234)).To(Equal("-1.23%"))
+			Expect(PercentPlain(1.234)).To(Equal("1.23%"))
+		})
+	})
 
-func TestPercent(t *testing.T) {
-	if got := Percent(1.234); got != "+1.23%" {
-		t.Errorf("Percent(1.234) = %q, expected \"+1.23%%\"", got)
-	}
-	if got := Percent(-1.234); got != "-1.23%" {
-		t.Errorf("Percent(-1.234) = %q, expected \"-1.23%%\"", got)
-	}
-}
+	Context("Eok & TrillionFromEok", func() {
+		It("formats eok and trillion values", func() {
+			Expect(Eok(12.6)).To(Equal("+13"))
+			Expect(Eok(-12.4)).To(Equal("-12"))
+			Expect(TrillionFromEok(15000)).To(Equal("+1.5조원"))
+		})
+	})
 
-func TestPercentPlain(t *testing.T) {
-	if got := PercentPlain(1.234); got != "1.23%" {
-		t.Errorf("PercentPlain(1.234) = %q, expected \"1.23%%\"", got)
-	}
-}
+	Context("Arrow and ArrowNeutral", func() {
+		It("returns direction arrows based on sign", func() {
+			Expect(Arrow(1.5)).To(Equal("▲+"))
+			Expect(Arrow(-1.5)).To(Equal("▼"))
+			Expect(Arrow(0)).To(Equal(" "))
 
-func TestEok(t *testing.T) {
-	if got := Eok(12.6); got != "+13" {
-		t.Errorf("Eok(12.6) = %q, expected \"+13\"", got)
-	}
-	if got := Eok(-12.4); got != "-12" {
-		t.Errorf("Eok(-12.4) = %q, expected \"-12\"", got)
-	}
-}
+			Expect(ArrowNeutral(1.5)).To(Equal("▲"))
+			Expect(ArrowNeutral(-1.5)).To(Equal("▼"))
+			Expect(ArrowNeutral(0)).To(Equal("─"))
+		})
+	})
 
-func TestTrillionFromEok(t *testing.T) {
-	if got := TrillionFromEok(15000); got != "+1.5조원" {
-		t.Errorf("TrillionFromEok(15000) = %q, expected \"+1.5조원\"", got)
-	}
-}
+	Context("EokArrow & AmountEok", func() {
+		It("formats eok with direction arrows and units", func() {
+			Expect(EokArrow(15000)).To(Equal("▲+1.50조"))
+			Expect(EokArrow(150)).To(Equal("▲+150억"))
+			Expect(EokArrow(-15000)).To(Equal("▼-1.50조"))
+			Expect(EokArrow(-150)).To(Equal("▼-150억"))
 
-func TestArrow(t *testing.T) {
-	if got := Arrow(1.5); got != "▲+" {
-		t.Errorf("Arrow(1.5) = %q, expected \"▲+\"", got)
-	}
-	if got := Arrow(-1.5); got != "▼" {
-		t.Errorf("Arrow(-1.5) = %q, expected \"▼\"", got)
-	}
-	if got := Arrow(0); got != " " {
-		t.Errorf("Arrow(0) = %q, expected \" \"", got)
-	}
-}
-
-func TestArrowNeutral(t *testing.T) {
-	if got := ArrowNeutral(1.5); got != "▲" {
-		t.Errorf("ArrowNeutral(1.5) = %q, expected \"▲\"", got)
-	}
-	if got := ArrowNeutral(-1.5); got != "▼" {
-		t.Errorf("ArrowNeutral(-1.5) = %q, expected \"▼\"", got)
-	}
-	if got := ArrowNeutral(0); got != "─" {
-		t.Errorf("ArrowNeutral(0) = %q, expected \"─\"", got)
-	}
-}
-
-func TestEokArrow(t *testing.T) {
-	if got := EokArrow(15000); got != "▲+1.50조" {
-		t.Errorf("EokArrow(15000) = %q, expected \"▲+1.50조\"", got)
-	}
-	if got := EokArrow(150); got != "▲+150억" {
-		t.Errorf("EokArrow(150) = %q, expected \"▲+150억\"", got)
-	}
-	if got := EokArrow(-15000); got != "▼-1.50조" {
-		t.Errorf("EokArrow(-15000) = %q, expected \"▼-1.50조\"", got)
-	}
-	if got := EokArrow(-150); got != "▼-150억" {
-		t.Errorf("EokArrow(-150) = %q, expected \"▼-150억\"", got)
-	}
-}
-
-func TestAmountEok(t *testing.T) {
-	if got := AmountEok(15000); got != "1.50조" {
-		t.Errorf("AmountEok(15000) = %q, expected \"1.50조\"", got)
-	}
-	if got := AmountEok(-150); got != "150억" {
-		t.Errorf("AmountEok(-150) = %q, expected \"150억\"", got)
-	}
-}
+			Expect(AmountEok(15000)).To(Equal("1.50조"))
+			Expect(AmountEok(-150)).To(Equal("150억"))
+		})
+	})
+})

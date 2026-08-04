@@ -8,168 +8,136 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
 	"github.com/fifi/internal/testhelpers"
 )
 
-func TestAnalyzeBuildsUSDValuationFromExternalInputs(t *testing.T) {
-	transport := testhelpers.NewMockTransport()
-	t.Cleanup(func() {
-		if err := transport.Verify(); err != nil {
-			t.Fatal(err)
-		}
-	})
+var _ = Describe("CompanyAnalysis Service", func() {
+	Context("Analyze", func() {
+		It("builds USD valuation from SEC, FRED, and Stooq external inputs", func() {
+			transport := testhelpers.NewMockTransport()
 
-	transport.New("https://sec.test").
-		Get("/company_tickers.json").
-		Reply(http.StatusOK).
-		JSON(map[string]any{
-			"0": map[string]any{
-				"cik_str": 1045810,
-				"ticker":  "NVDA",
-				"title":   "NVIDIA CORP",
-			},
+			transport.New("https://sec.test").
+				Get("/company_tickers.json").
+				Reply(http.StatusOK).
+				JSON(map[string]any{
+					"0": map[string]any{
+						"cik_str": 1045810,
+						"ticker":  "NVDA",
+						"title":   "NVIDIA CORP",
+					},
+				})
+
+			transport.New("https://sec.test").
+				Get("/companyfacts/CIK0001045810.json").
+				Reply(http.StatusOK).
+				Body(buildCompanyFactsPayload())
+
+			transport.New("https://fred.test").
+				Get("/dgs10.csv").
+				Reply(http.StatusOK).
+				BodyString("observation_date,DGS10\n2026-03-16,4.10\n2026-03-17,4.15\n")
+
+			transport.New("https://stooq.test").
+				Get("/?i=d&s=nvda.us").
+				Reply(http.StatusOK).
+				BodyString(buildStooqCSV("2026-01-01", 100, 40, 0.0016))
+
+			transport.New("https://stooq.test").
+				Get("/?i=d&s=spy.us").
+				Reply(http.StatusOK).
+				BodyString(buildStooqCSV("2026-01-01", 200, 40, 0.0011))
+
+			svc := NewService(&http.Client{Transport: transport}, Config{
+				SECTickersURL:       "https://sec.test/company_tickers.json",
+				SECCompanyFactsBase: "https://sec.test/companyfacts",
+				FRED10YearURL:       "https://fred.test/dgs10.csv",
+				StooqBaseURL:        "https://stooq.test",
+				SECUserAgent:        "test-agent",
+			})
+
+			marketPremium := 0.055
+			result, err := svc.Analyze(context.Background(), "NVDA", AnalysisOptions{
+				BenchmarkSymbol:  "SPY",
+				MarketPremium:    &marketPremium,
+				BetaLookbackDays: 30,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result.Symbol).To(Equal("NVDA"))
+			Expect(result.CompanyName).To(Equal("NVIDIA CORP"))
+			Expect(result.Quote.Currency).To(Equal("USD"))
+			Expect(result.Quote.Price).To(BeNumerically(">", 0))
+			Expect(result.Market.RiskFreeRate).To(BeNumerically(">", 0.041))
+			Expect(result.Market.RiskFreeRate).To(BeNumerically("<", 0.042))
+			Expect(result.Market.Beta).To(BeNumerically(">", 0))
+			Expect(result.Valuation).NotTo(BeNil())
+			Expect(result.Valuation.TargetPriceScale).To(Equal(1.0))
+			Expect(result.Valuation.TargetPriceUnit).To(Equal("USD/share"))
+			Expect(result.KeyMetrics.MarketCap).To(BeNumerically(">", 0))
+
+			Expect(transport.Verify()).To(Succeed())
 		})
 
-	transport.New("https://sec.test").
-		Get("/companyfacts/CIK0001045810.json").
-		Reply(http.StatusOK).
-		Body(buildCompanyFactsPayload(t))
+		It("falls back to cached SEC data when SEC fair access page is returned", func() {
+			cacheDir := GinkgoT().TempDir()
+			tickersCachePath := filepath.Join(cacheDir, "sec_company_tickers.json")
+			factsCachePath := filepath.Join(cacheDir, "sec_companyfacts.json")
+			Expect(os.WriteFile(tickersCachePath, []byte(`{"0":{"cik_str":1045810,"ticker":"NVDA","title":"NVIDIA CORP"}}`), 0o600)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(cacheDir, "sec_companyfacts.0001045810.json"), buildCompanyFactsPayload(), 0o600)).To(Succeed())
 
-	transport.New("https://fred.test").
-		Get("/dgs10.csv").
-		Reply(http.StatusOK).
-		BodyString("observation_date,DGS10\n2026-03-16,4.10\n2026-03-17,4.15\n")
+			transport := testhelpers.NewMockTransport()
 
-	transport.New("https://stooq.test").
-		Get("/?i=d&s=nvda.us").
-		Reply(http.StatusOK).
-		BodyString(buildStooqCSV("2026-01-01", 100, 40, 0.0016))
+			blockedBody := `<body><h1>Automated access to our sites must comply with SEC.gov's Privacy and Security Policy.</h1></body>`
+			transport.New("https://sec.test").
+				Get("/company_tickers.json").
+				Reply(http.StatusOK).
+				BodyString(blockedBody)
+			transport.New("https://sec.test").
+				Get("/companyfacts/CIK0001045810.json").
+				Reply(http.StatusOK).
+				BodyString(blockedBody)
+			transport.New("https://fred.test").
+				Get("/dgs10.csv").
+				Reply(http.StatusOK).
+				BodyString("observation_date,DGS10\n2026-03-17,4.15\n")
+			transport.New("https://stooq.test").
+				Get("/?i=d&s=nvda.us").
+				Reply(http.StatusOK).
+				BodyString(buildStooqCSV("2026-01-01", 100, 40, 0.0016))
+			transport.New("https://stooq.test").
+				Get("/?i=d&s=spy.us").
+				Reply(http.StatusOK).
+				BodyString(buildStooqCSV("2026-01-01", 200, 40, 0.0011))
 
-	transport.New("https://stooq.test").
-		Get("/?i=d&s=spy.us").
-		Reply(http.StatusOK).
-		BodyString(buildStooqCSV("2026-01-01", 200, 40, 0.0011))
+			svc := NewService(&http.Client{Transport: transport}, Config{
+				SECTickersURL:            "https://sec.test/company_tickers.json",
+				SECCompanyFactsBase:      "https://sec.test/companyfacts",
+				FRED10YearURL:            "https://fred.test/dgs10.csv",
+				StooqBaseURL:             "https://stooq.test",
+				SECUserAgent:             "test-agent contact@example.com",
+				SECTickersCachePath:      tickersCachePath,
+				SECCompanyFactsCachePath: factsCachePath,
+			})
 
-	svc := NewService(&http.Client{Transport: transport}, Config{
-		SECTickersURL:       "https://sec.test/company_tickers.json",
-		SECCompanyFactsBase: "https://sec.test/companyfacts",
-		FRED10YearURL:       "https://fred.test/dgs10.csv",
-		StooqBaseURL:        "https://stooq.test",
-		SECUserAgent:        "test-agent",
+			marketPremium := 0.055
+			result, err := svc.Analyze(context.Background(), "NVDA", AnalysisOptions{
+				BenchmarkSymbol:  "SPY",
+				MarketPremium:    &marketPremium,
+				BetaLookbackDays: 30,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.CompanyName).To(Equal("NVIDIA CORP"))
+			Expect(transport.Verify()).To(Succeed())
+		})
 	})
+})
 
-	marketPremium := 0.055
-	result, err := svc.Analyze(context.Background(), "NVDA", AnalysisOptions{
-		BenchmarkSymbol:  "SPY",
-		MarketPremium:    &marketPremium,
-		BetaLookbackDays: 30,
-	})
-	if err != nil {
-		t.Fatalf("Analyze returned error: %v", err)
-	}
-
-	if result.Symbol != "NVDA" {
-		t.Fatalf("unexpected symbol %q", result.Symbol)
-	}
-	if result.CompanyName != "NVIDIA CORP" {
-		t.Fatalf("unexpected company name %q", result.CompanyName)
-	}
-	if result.Quote.Currency != "USD" {
-		t.Fatalf("unexpected quote currency %q", result.Quote.Currency)
-	}
-	if result.Quote.Price <= 0 {
-		t.Fatalf("expected positive quote price, got %.4f", result.Quote.Price)
-	}
-	if result.Market.RiskFreeRate <= 0.041 || result.Market.RiskFreeRate >= 0.042 {
-		t.Fatalf("unexpected risk free rate %.6f", result.Market.RiskFreeRate)
-	}
-	if result.Market.Beta <= 0 {
-		t.Fatalf("expected positive beta, got %.6f", result.Market.Beta)
-	}
-	if result.Valuation == nil {
-		t.Fatal("valuation is nil")
-	}
-	if result.Valuation.TargetPriceScale != 1 {
-		t.Fatalf("unexpected target price scale %.2f", result.Valuation.TargetPriceScale)
-	}
-	if result.Valuation.TargetPriceUnit != "USD/share" {
-		t.Fatalf("unexpected target price unit %q", result.Valuation.TargetPriceUnit)
-	}
-	if result.KeyMetrics.MarketCap <= 0 {
-		t.Fatalf("expected positive market cap, got %.2f", result.KeyMetrics.MarketCap)
-	}
-}
-
-func TestAnalyzeFallsBackToCachedSECDataWhenFairAccessPageIsReturned(t *testing.T) {
-	cacheDir := t.TempDir()
-	tickersCachePath := filepath.Join(cacheDir, "sec_company_tickers.json")
-	factsCachePath := filepath.Join(cacheDir, "sec_companyfacts.json")
-	if err := os.WriteFile(tickersCachePath, []byte(`{"0":{"cik_str":1045810,"ticker":"NVDA","title":"NVIDIA CORP"}}`), 0o600); err != nil {
-		t.Fatalf("failed to seed tickers cache: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "sec_companyfacts.0001045810.json"), buildCompanyFactsPayload(t), 0o600); err != nil {
-		t.Fatalf("failed to seed company facts cache: %v", err)
-	}
-
-	transport := testhelpers.NewMockTransport()
-	t.Cleanup(func() {
-		if err := transport.Verify(); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	blockedBody := `<body><h1>Automated access to our sites must comply with SEC.gov's Privacy and Security Policy.</h1></body>`
-	transport.New("https://sec.test").
-		Get("/company_tickers.json").
-		Reply(http.StatusOK).
-		BodyString(blockedBody)
-	transport.New("https://sec.test").
-		Get("/companyfacts/CIK0001045810.json").
-		Reply(http.StatusOK).
-		BodyString(blockedBody)
-	transport.New("https://fred.test").
-		Get("/dgs10.csv").
-		Reply(http.StatusOK).
-		BodyString("observation_date,DGS10\n2026-03-17,4.15\n")
-	transport.New("https://stooq.test").
-		Get("/?i=d&s=nvda.us").
-		Reply(http.StatusOK).
-		BodyString(buildStooqCSV("2026-01-01", 100, 40, 0.0016))
-	transport.New("https://stooq.test").
-		Get("/?i=d&s=spy.us").
-		Reply(http.StatusOK).
-		BodyString(buildStooqCSV("2026-01-01", 200, 40, 0.0011))
-
-	svc := NewService(&http.Client{Transport: transport}, Config{
-		SECTickersURL:            "https://sec.test/company_tickers.json",
-		SECCompanyFactsBase:      "https://sec.test/companyfacts",
-		FRED10YearURL:            "https://fred.test/dgs10.csv",
-		StooqBaseURL:             "https://stooq.test",
-		SECUserAgent:             "test-agent contact@example.com",
-		SECTickersCachePath:      tickersCachePath,
-		SECCompanyFactsCachePath: factsCachePath,
-	})
-
-	marketPremium := 0.055
-	result, err := svc.Analyze(context.Background(), "NVDA", AnalysisOptions{
-		BenchmarkSymbol:  "SPY",
-		MarketPremium:    &marketPremium,
-		BetaLookbackDays: 30,
-	})
-	if err != nil {
-		t.Fatalf("Analyze returned error with cached SEC data: %v", err)
-	}
-	if result.CompanyName != "NVIDIA CORP" {
-		t.Fatalf("unexpected company name %q", result.CompanyName)
-	}
-}
-
-func buildCompanyFactsPayload(t *testing.T) []byte {
-	t.Helper()
-
+func buildCompanyFactsPayload() []byte {
 	payload := map[string]any{
 		"cik":        1045810,
 		"entityName": "NVIDIA CORP",
@@ -266,9 +234,7 @@ func buildCompanyFactsPayload(t *testing.T) []byte {
 	}
 
 	raw, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("failed to marshal payload: %v", err)
-	}
+	Expect(err).NotTo(HaveOccurred())
 	return raw
 }
 
