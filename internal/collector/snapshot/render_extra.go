@@ -2,8 +2,12 @@ package snapshot
 
 import (
 	"fmt"
+	"math"
 	"strings"
+
+	"github.com/fifi/internal/format"
 )
+
 
 // render_extra.go: Section 7 (변동성), 9 (Regime), 10 (집중도) 렌더링
 
@@ -109,34 +113,43 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 
 	// 반대매매 (KOFIA FreeSIS)
 	if c.ForcedSellAmountEok > 0 || c.MarginReceivableEok > 0 {
-		if c.MarginReceivableEok > 0 {
-			marginLine := eokPlain(c.MarginReceivableEok) + "억"
+		mEok := c.MarginReceivableEok
+		if mEok > 10000 {
+			mEok = mEok / 100.0
+		}
+		if mEok > 0 {
+			marginLine := format.Number(mEok, 2) + "억원"
 			if p != nil && p.Credit != nil && p.Credit.MarginReceivableEok > 0 {
-				diff := c.MarginReceivableEok - p.Credit.MarginReceivableEok
-				diffStr := eok(diff)
+				pMEok := p.Credit.MarginReceivableEok
+				if pMEok > 10000 {
+					pMEok = pMEok / 100.0
+				}
+				diff := mEok - pMEok
+				diffStr := format.Signed(diff, 2) + "억원"
 				if isKOFIAStale {
 					diffStr = "미갱신"
 				}
-				if isKOFIAStale {
-					marginLine += fmt.Sprintf("  [전일 %s억, %s]", eokPlain(p.Credit.MarginReceivableEok), diffStr)
-				} else {
-					marginLine += fmt.Sprintf("  [전일 %s억, %s억]", eokPlain(p.Credit.MarginReceivableEok), diffStr)
-				}
+				marginLine += fmt.Sprintf("  [전일 %s억원, %s]", format.Number(pMEok, 2), diffStr)
 			}
 			b.WriteString("- 위탁매매 미수금: " + marginLine + "\n")
 		}
-		forcedLine := eokPlain(c.ForcedSellAmountEok) + "억"
+
+		fEok := c.ForcedSellAmountEok
+		if fEok > 10000 {
+			fEok = fEok / 100.0
+		}
+		forcedLine := format.Number(fEok, 2) + "억원"
 		if p != nil && p.Credit != nil && p.Credit.ForcedSellAmountEok > 0 {
-			diff := c.ForcedSellAmountEok - p.Credit.ForcedSellAmountEok
-			diffStr := eok(diff)
+			pFEok := p.Credit.ForcedSellAmountEok
+			if pFEok > 10000 {
+				pFEok = pFEok / 100.0
+			}
+			diff := fEok - pFEok
+			diffStr := format.Signed(diff, 2) + "억원"
 			if isKOFIAStale {
 				diffStr = "미갱신"
 			}
-			if isKOFIAStale {
-				forcedLine += fmt.Sprintf("  [전일 %s억, %s]", eokPlain(p.Credit.ForcedSellAmountEok), diffStr)
-			} else {
-				forcedLine += fmt.Sprintf("  [전일 %s억, %s억]", eokPlain(p.Credit.ForcedSellAmountEok), diffStr)
-			}
+			forcedLine += fmt.Sprintf("  [전일 %s억원, %s]", format.Number(pFEok, 2), diffStr)
 		}
 		b.WriteString("- 실제 반대매매: " + forcedLine)
 		if c.ForcedSellRatioPct > 0 {
@@ -149,6 +162,7 @@ func renderCredit(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	}
 	b.WriteString("\n")
 }
+
 
 
 func forcedSellLevel(pct float64) string {
@@ -244,28 +258,34 @@ func renderConcentration(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	hhiLine := fmt.Sprintf("%.0f [%s]", c.HHI, hhiLevelStr)
 	if p != nil && p.Concentration != nil {
 		if p.Concentration.Top5Percent > 0 {
-			diff := c.Top5Percent - p.Concentration.Top5Percent
+			c5 := math.Round(c.Top5Percent*10) / 10.0
+			p5 := math.Round(p.Concentration.Top5Percent*10) / 10.0
+			diff := c5 - p5
 			diffStr := signedNumber(diff, 1) + "%p"
 			if isStale {
 				diffStr = "미갱신"
 			}
-			top5Line += fmt.Sprintf("  [전일 %.1f%%, %s]", p.Concentration.Top5Percent, diffStr)
+			top5Line += fmt.Sprintf("  [전일 %.1f%%, %s]", p5, diffStr)
 		}
 		if p.Concentration.Top10Percent > 0 {
-			diff := c.Top10Percent - p.Concentration.Top10Percent
+			c10 := math.Round(c.Top10Percent*10) / 10.0
+			p10 := math.Round(p.Concentration.Top10Percent*10) / 10.0
+			diff := c10 - p10
 			diffStr := signedNumber(diff, 1) + "%p"
 			if isStale {
 				diffStr = "미갱신"
 			}
-			top10Line += fmt.Sprintf("  [전일 %.1f%%, %s]", p.Concentration.Top10Percent, diffStr)
+			top10Line += fmt.Sprintf("  [전일 %.1f%%, %s]", p10, diffStr)
 		}
 		if p.Concentration.HHI > 0 {
-			diff := c.HHI - p.Concentration.HHI
+			cHHI := math.Round(c.HHI)
+			pHHI := math.Round(p.Concentration.HHI)
+			diff := cHHI - pHHI
 			diffStr := signedNumber(diff, 0)
 			if isStale {
 				diffStr = "미갱신"
 			}
-			hhiLine += fmt.Sprintf("  [전일 %.0f, %s]", p.Concentration.HHI, diffStr)
+			hhiLine += fmt.Sprintf("  [전일 %.0f, %s]", pHHI, diffStr)
 		}
 	}
 	b.WriteString("- 상위 5종목 시총 비중: " + top5Line + "\n")
@@ -306,19 +326,27 @@ func renderLateSession(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		}
 		
 		b.WriteString(fmt.Sprintf("- 선물-현물 동시점 베이시스 (15:30 KST): %s (%s)\n", sameTimeBasisStr, alignNote))
-		b.WriteString(fmt.Sprintf("- 선물-현물 종가간 스프레드 (15:45 / 15:30): %s\n", closeBasisStr))
+		b.WriteString(fmt.Sprintf("- 선물-현물 종가간 스프레드 (15:45 / 15:30): %s (NOT_A_BASIS — 시각 불일치)\n", closeBasisStr))
 		b.WriteString(fmt.Sprintf("  - 현물(KOSPI 200 종가): %.2f | 선물 15:30가: %.2f | 선물 최종 종가: %.2f\n", ls.SpotPrice, ls.FuturesPrice1530, ls.FuturesPrice))
 	} else {
 		b.WriteString("- 선물-현물 베이시스: N/A\n")
 	}
 
-	// 2) 프로그램 비차익 당일 누적 수급 (억 원)
+	// 2) 코스피 프로그램 매매 누적 (억 원)
 	reconciledNote := ""
 	if ls.ProgramReconciledStatus == "NOT_RECONCILED" {
 		reconciledNote = " [NOT_RECONCILED: 기관/계 파싱 실패 또는 수급 불일치]"
 	}
-	b.WriteString("- 코스피 프로그램 비차익 누적 (억 원):" + reconciledNote + "\n")
-	b.WriteString(fmt.Sprintf("  - 외국인: %s | 기관: %s | 전체: %s\n", eok(ls.KOSPINetNonArbitrageForeign), eok(ls.KOSPINetNonArbitrageOrgan), eok(ls.KOSPINetNonArbitrageTotal)))
+	b.WriteString("- 코스피 프로그램 매매 누적 (억 원):" + reconciledNote + "\n")
+	totProgNet := ls.KOSPIProgramTotalNet
+	if totProgNet == 0 && (ls.KOSPINetArbitrageTotal != 0 || ls.KOSPINetNonArbitrageTotal != 0) {
+		totProgNet = ls.KOSPINetArbitrageTotal + ls.KOSPINetNonArbitrageTotal
+	}
+	b.WriteString(fmt.Sprintf("  - 차익: %s | 비차익: %s | 합계: %s\n", eok(ls.KOSPINetArbitrageTotal), eok(ls.KOSPINetNonArbitrageTotal), eok(totProgNet)))
+	if ls.KOSPINetNonArbitrageForeign != 0 || ls.KOSPINetNonArbitrageOrgan != 0 {
+		b.WriteString(fmt.Sprintf("  - (외국인 비차익: %s | 기관 비차익: %s)\n", eok(ls.KOSPINetNonArbitrageForeign), eok(ls.KOSPINetNonArbitrageOrgan)))
+	}
+
 
 	// 3) 15시 이후 장 막판 흐름
 	progNetStr := "N/A"

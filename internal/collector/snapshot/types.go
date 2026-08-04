@@ -78,9 +78,11 @@ type LateSessionSection struct {
 	BasisPoint1530                float64       `json:"basis_point_1530,omitempty"`
 	BasisAlignmentStatus          string        `json:"basis_alignment_status,omitempty"` // "VERIFIED" or "ALIGNMENT_UNVERIFIED"
 
+	KOSPINetArbitrageTotal        float64       `json:"kospi_net_arbitrage_total,omitempty"`
 	KOSPINetNonArbitrageForeign   float64       `json:"kospi_net_non_arbitrage_foreign"`
 	KOSPINetNonArbitrageOrgan     float64       `json:"kospi_net_non_arbitrage_organ"`
 	KOSPINetNonArbitrageTotal     float64       `json:"kospi_net_non_arbitrage_total"`
+	KOSPIProgramTotalNet          float64       `json:"kospi_program_total_net,omitempty"`
 	ProgramReconciledStatus       string        `json:"program_reconciled_status,omitempty"` // "RECONCILED" or "NOT_RECONCILED"
 
 	LateProgramNetEok             *float64      `json:"late_program_net_eok"`

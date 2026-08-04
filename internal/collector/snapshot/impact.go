@@ -71,6 +71,9 @@ func tradingValueLabel(pct float64) string {
 	absPct := math.Abs(pct)
 	switch {
 	case absPct < 10:
+		if pct < 0 {
+			return "자체 경보 임계치 미만이나 의미 있는 순매도"
+		}
 		return "정상"
 	case absPct < 20:
 		return "주의"
@@ -78,6 +81,7 @@ func tradingValueLabel(pct float64) string {
 		return "위험"
 	}
 }
+
 
 
 func (s *ImpactSection) collectFutures(ctx context.Context, futures DomesticFuture, date string) {
