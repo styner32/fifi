@@ -16,23 +16,23 @@ func Analyze(p *Pulse) []string {
 
 	var bullets []string
 
-	// 1. 지수 모멘텀
+	// 1. 종합 시장 상태 (가장 상단에 배치)
+	bullets = append(bullets, analyzeRiskLabel(p))
+
+	// 2. 지수 모멘텀
 	bullets = append(bullets, analyzeIndexMomentum(p)...)
 
-	// 2. 수급 주도 주체
+	// 3. 수급 주도 주체
 	bullets = append(bullets, analyzeFlowLeader(p)...)
 
-	// 3. 외국인 × 환율 연계
+	// 4. 외국인 × 환율 연계
 	bullets = append(bullets, analyzeForexLink(p)...)
 
-	// 4. 미국선물 동조/디커플링
+	// 5. 미국선물 동조/디커플링
 	bullets = append(bullets, analyzeFuturesSync(p)...)
 
-	// 5. 금리/유가 보조
+	// 6. 금리/유가 보조
 	bullets = append(bullets, analyzeMacroSignals(p)...)
-
-	// 6. 종합 리스크 라벨
-	bullets = append(bullets, analyzeRiskLabel(p))
 
 	return bullets
 }
@@ -171,70 +171,188 @@ func analyzeMacroSignals(p *Pulse) []string {
 	return out
 }
 
-// analyzeRiskLabel은 신호들을 합산해 리스크 라벨을 반환합니다.
+// analyzeRiskLabel은 신호들을 종합해 구조화된 시장 상태 블록을 반환합니다.
 func analyzeRiskLabel(p *Pulse) string {
-	score := 0 // 양수 = Risk-on, 음수 = Risk-off
+	// 1. 방향성 (Directionality)
+	kospiDir := "KOSPI_FLAT"
+	if p.KOSPI.Index.OK {
+		pct := p.KOSPI.Index.ChangePct
+		switch {
+		case pct >= 1.5:
+			kospiDir = "KOSPI_STRONG_UP"
+		case pct >= 0.5:
+			kospiDir = "KOSPI_UP"
+		case pct > -0.5 && pct < 0.5:
+			kospiDir = "KOSPI_WEAK_FLAT"
+		case pct <= -1.5:
+			kospiDir = "KOSPI_STRONG_DOWN"
+		case pct <= -0.5:
+			kospiDir = "KOSPI_WEAK"
+		}
+	}
+	kosdaqDir := "KOSDAQ_FLAT"
+	if p.KOSDAQ.Index.OK {
+		pct := p.KOSDAQ.Index.ChangePct
+		switch {
+		case pct >= 1.5:
+			kosdaqDir = "KOSDAQ_STRONG_UP"
+		case pct >= 0.5:
+			kosdaqDir = "KOSDAQ_UP"
+		case pct > -0.5 && pct < 0.5:
+			kosdaqDir = "KOSDAQ_WEAK_FLAT"
+		case pct <= -1.5:
+			kosdaqDir = "KOSDAQ_STRONG_DOWN"
+		case pct <= -0.5:
+			kosdaqDir = "KOSDAQ_WEAK"
+		}
+	}
+	dirStr := fmt.Sprintf("%s · %s", kospiDir, kosdaqDir)
 
-	if p.KOSPI.IntradayWin.Move1hPct != nil {
+	// 2. 수급 (Flow)
+	foreignNet := p.KOSPI.Flow.Foreign + p.KOSDAQ.Flow.Foreign
+	instNet := p.KOSPI.Flow.Institution + p.KOSDAQ.Flow.Institution
+	progNet := p.KOSPIProgram.Total + p.KOSDAQProgram.Total
+	indivNet := p.KOSPI.Flow.Individual + p.KOSDAQ.Flow.Individual
+
+	flowStatus := "NEUTRAL"
+	flowDetail := ""
+	if foreignNet < -100 && instNet < -100 {
+		flowStatus = "NEGATIVE"
+		if progNet < 0 {
+			flowDetail = " (외국인·기관 및 프로그램 순매도)"
+		} else {
+			flowDetail = " (외국인·기관 순매도)"
+		}
+	} else if foreignNet > 100 && instNet > 100 {
+		flowStatus = "POSITIVE"
+		if progNet > 0 {
+			flowDetail = " (외국인·기관 및 프로그램 순매수)"
+		} else {
+			flowDetail = " (외국인·기관 순매수)"
+		}
+	} else if foreignNet < -100 && instNet > 100 {
+		flowStatus = "MIXED"
+		flowDetail = " (기관 순매수 vs 외국인 순매도)"
+	} else if foreignNet > 100 && instNet < -100 {
+		flowStatus = "MIXED"
+		flowDetail = " (외국인 순매수 vs 기관 순매도)"
+	} else if indivNet > 500 && (foreignNet < 0 || instNet < 0) {
+		flowStatus = "NEGATIVE"
+		flowDetail = " (개인 순매수 vs 외인·기관 매도)"
+	}
+	flowStr := fmt.Sprintf("%s%s", flowStatus, flowDetail)
+
+	// 3. 내부폭 (Breadth)
+	breadthStr := "MIXED"
+	totAdv := p.KOSPI.Index.Advancers + p.KOSDAQ.Index.Advancers + p.KOSPI.Index.UpperLimit + p.KOSDAQ.Index.UpperLimit
+	totAll := p.KOSPI.Index.TotalCount + p.KOSDAQ.Index.TotalCount
+	if totAll == 0 {
+		totAll = p.KOSPI.Index.Advancers + p.KOSPI.Index.Decliners + p.KOSDAQ.Index.Advancers + p.KOSDAQ.Index.Decliners
+	}
+	if totAll > 0 {
+		ratio := float64(totAdv) / float64(totAll)
+		switch {
+		case ratio >= 0.70:
+			breadthStr = "STRONG"
+		case ratio >= 0.55:
+			breadthStr = "MODERATE_STRONG"
+		case ratio <= 0.15:
+			breadthStr = "EXTREME_WEAK"
+		case ratio <= 0.35:
+			breadthStr = "WEAK"
+		default:
+			breadthStr = "MIXED"
+		}
+	}
+
+	// 4. 스트레스 (Stress)
+	stressStr := "NORMAL"
+	if p.VKOSPI.OK {
+		if p.VKOSPI.Value >= 40.0 {
+			stressStr = "PROVISIONAL_ELEVATED"
+		} else if p.VKOSPI.Value >= 25.0 {
+			stressStr = "ELEVATED"
+		} else if p.VKOSPI.Value < 20.0 {
+			stressStr = "NORMAL"
+		}
+	} else {
+		stressStr = "PROVISIONAL_NORMAL"
+	}
+	for _, d := range p.Safety.Devices {
+		if strings.HasPrefix(d.Device, "CB") && (d.State == "TRIGGERED" || d.State == "RELEASED") {
+			stressStr = "EXTREME"
+		} else if strings.HasPrefix(d.Device, "SIDECAR_") && (d.State == "TRIGGERED" || d.State == "RELEASED") {
+			stressStr = "VERY_HIGH"
+		}
+	}
+
+	// 5. 매크로 (Macro)
+	macroStr := "MIXED"
+	var adverseCount, supportiveCount int
+	for _, w := range p.Macro {
+		if w.Move1hPct != nil {
+			if w.Symbol == "NQ=F" || w.Symbol == "ES=F" {
+				if *w.Move1hPct <= -0.2 {
+					adverseCount++
+				} else if *w.Move1hPct >= 0.2 {
+					supportiveCount++
+				}
+			}
+			if w.Symbol == "CL=F" && math.Abs(*w.Move1hPct) >= 2.0 {
+				adverseCount++
+			}
+			if w.Symbol == "^TNX" && *w.Move1hPct >= 1.5 {
+				adverseCount++
+			}
+		}
+	}
+	if p.USDKRW.Move1hPct != nil {
+		if *p.USDKRW.Move1hPct >= 0.1 {
+			adverseCount++
+		} else if *p.USDKRW.Move1hPct <= -0.1 {
+			supportiveCount++
+		}
+	}
+	if adverseCount >= 2 && supportiveCount == 0 {
+		macroStr = "ADVERSE"
+	} else if supportiveCount >= 2 && adverseCount == 0 {
+		macroStr = "SUPPORTIVE"
+	} else {
+		macroStr = "MIXED"
+	}
+
+	// 6. 신뢰도 (Confidence)
+	confidenceStr := "NOT_EVALUATED"
+	isEvaluated := p.KOSPI.IntradayWin.Move1hPct != nil && p.KOSPI.FlowDelta1h != nil
+	if isEvaluated {
+		confidenceStr = fmt.Sprintf("EVALUATED (%.1f%%)", p.Assessment.Confidence)
+	}
+
+	// 7. 종합 (Composite)
+	compositeStr := "COMPOSITE_NOT_CIRCULABLE"
+	if isEvaluated {
+		score := 0
 		if *p.KOSPI.IntradayWin.Move1hPct >= 0.5 {
 			score++
 		} else if *p.KOSPI.IntradayWin.Move1hPct <= -0.5 {
 			score--
 		}
-	}
-
-	if p.KOSPI.FlowDelta1h != nil {
-		foreignHourly := hourlyRate(p.KOSPI.FlowDelta1h.Foreign, p.KOSPI.FlowDelta1h.Elapsed)
-		if foreignHourly < -500 {
+		if p.KOSPI.FlowDelta1h.Foreign < -500 {
 			score -= 2
-		} else if foreignHourly > 500 {
+		} else if p.KOSPI.FlowDelta1h.Foreign > 500 {
 			score++
 		}
-	}
-
-	if p.USDKRW.Move1hPct != nil {
-		if *p.USDKRW.Move1hPct > 0.1 {
-			score-- // 원화 약세
+		if score >= 2 {
+			compositeStr = "RISK_ON"
+		} else if score <= -2 {
+			compositeStr = "RISK_OFF"
+		} else {
+			compositeStr = "NEUTRAL"
 		}
 	}
 
-	for i := range p.Macro {
-		w := &p.Macro[i]
-		if w.Symbol == "NQ=F" && w.Move1hPct != nil {
-			if *w.Move1hPct >= 0.5 {
-				score++
-			} else if *w.Move1hPct <= -0.5 {
-				score--
-			}
-		}
-		if w.Symbol == "^TNX" && w.Move1hPct != nil {
-			if *w.Move1hPct >= 1.5 {
-				score--
-			}
-		}
-	}
-
-	label := "중립 (Neutral)"
-	a := p.Assessment
-
-	isPriceUp := a.Direction == "UP" || a.Direction == "STRONG_UP" || (p.KOSPI.IntradayWin.Move1hPct != nil && *p.KOSPI.IntradayWin.Move1hPct > 0)
-	isFlowNegative := p.KOSPI.FlowDelta1h != nil && p.KOSPI.FlowDelta1h.Foreign < 0
-
-	if isPriceUp && isFlowNegative && a.Stress != "EXTREME" {
-		label = "수급 미동조 반등 (MIXED_REBOUND_UNCONFIRMED)"
-	} else if score >= 2 {
-		label = "위험선호 (Risk-on)"
-	} else if score <= -2 {
-		label = "위험회피 (Risk-off)"
-	}
-
-	return fmt.Sprintf("종합: %s (신호점수 %+d) [방향성 %s · 수급 %s · 스트레스 %s · 내부폭 %s · 매크로 %s (신뢰도 %.1f%%)]",
-		label, score, a.Direction, func() string {
-			if isFlowNegative {
-				return "NEGATIVE"
-			}
-			return "POSITIVE"
-		}(), a.Stress, a.InternalBreadth, a.ExternalMacro, a.Confidence)
+	return fmt.Sprintf("종합: %s\n    [방향성 %s\n     · 수급 %s\n     · 내부폭 %s\n     · 스트레스 %s\n     · 매크로 %s\n     · 신뢰도 %s]",
+		compositeStr, dirStr, flowStr, breadthStr, stressStr, macroStr, confidenceStr)
 }
 
 func AssessPulse(p *Pulse) PulseAssessment {

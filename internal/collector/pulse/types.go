@@ -86,9 +86,12 @@ type IndexLevel struct {
 	High         float64
 	Low          float64
 	TradingValue float64 // 억원 단위
-	Advancers    int
-	Decliners    int
-	Unchanged    int
+	UpperLimit   int     // 상한 (uplm_issu_cnt)
+	Advancers    int     // 상승 (ascn_issu_cnt)
+	Unchanged    int     // 보합 (stnr_issu_cnt)
+	Decliners    int     // 하락 (down_issu_cnt)
+	LowerLimit   int     // 하한 (lslm_issu_cnt)
+	TotalCount   int     // 전체 종목수
 	OK           bool
 	// Metadata
 	LastTS      time.Time `json:"last_ts,omitempty"`
@@ -103,7 +106,9 @@ type Window struct {
 	Symbol      string
 	Label       string
 	Current     float64
-	ChangePct   float64 // 전일 종가 대비 (quote.ChangePercent)
+	PrevClose   float64   `json:"prev_close,omitempty"`
+	Source      string    `json:"source,omitempty"`
+	ChangePct   float64   // 전일 종가 대비 (quote.ChangePercent)
 	LastTS      time.Time
 	Move1hPct   *float64
 	Move2hPct   *float64
@@ -155,6 +160,7 @@ type IndexFutureSnapshot struct {
 	SpotPrice     float64 `json:"spot_price"`
 	SpotChangePct float64 `json:"spot_change_pct"`
 	Basis         float64 `json:"basis"`
+	RawSpread     float64 `json:"raw_spread,omitempty"`
 	MarketBasis   float64 `json:"market_basis"`
 	BasisMatch    bool    `json:"basis_match"`
 	OK            bool    `json:"ok"`
@@ -215,7 +221,13 @@ type SafetyDeviceStatus struct {
 	EligibleNow          bool     `json:"eligible_now"`
 	EligibilityReason    string   `json:"eligibility_reason,omitempty"`
 	Threshold            float64  `json:"threshold"`
+	SpotThreshold        *float64 `json:"spot_threshold,omitempty"`
 	ThresholdDistancePct *float64 `json:"threshold_distance_pct,omitempty"`
+	FuturesChangePct     *float64 `json:"futures_change_pct,omitempty"`
+	SpotChangePct        *float64 `json:"spot_change_pct,omitempty"`
+	IndexChangePct       *float64 `json:"index_change_pct,omitempty"`
+	FuturesGapPct        *float64 `json:"futures_gap_pct,omitempty"`
+	SpotGapPct           *float64 `json:"spot_gap_pct,omitempty"`
 	ConditionObservedAt  string   `json:"condition_observed_at,omitempty"`
 	TriggeredAt          string   `json:"triggered_at,omitempty"`
 	ReleasedAt           string   `json:"released_at,omitempty"`
