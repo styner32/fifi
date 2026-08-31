@@ -40,9 +40,11 @@ func Collect(ctx context.Context, deps Deps, opts Options) *PremarketReport {
 	// Fetch VKOSPI
 	var vkospiVal float64
 	if deps.Stock != nil {
-		if resp, err := deps.Stock.InquireVKOSPIPrice(ctx, "VKOSPI"); err == nil && resp != nil {
-			if r := firstRow(resp, "output"); r != nil {
-				vkospiVal, _ = num(r, "bstp_nmix_prpr")
+		if code, err := deps.Stock.ResolveVKOSPICode(ctx, nil); err == nil {
+			if resp, err := deps.Stock.InquireVKOSPIPrice(ctx, code); err == nil && resp != nil {
+				if r := firstRow(resp, "output"); r != nil {
+					vkospiVal, _ = num(r, "bstp_nmix_prpr")
+				}
 			}
 		}
 	}

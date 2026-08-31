@@ -9,6 +9,7 @@ import (
 	"github.com/fifi/internal/domesticstock"
 	"github.com/fifi/internal/external/naver"
 	"github.com/fifi/internal/external/yahoo"
+	"github.com/fifi/internal/market/facts"
 )
 
 type DomesticStock interface {
@@ -51,6 +52,7 @@ type Deps struct {
 	Yahoo          YahooQuotes
 	Naver          NaverFinance
 	KOFIA          KOFIAClient
+	Facts          facts.Store
 }
 
 type Options struct {
@@ -68,40 +70,90 @@ type Options struct {
 }
 
 
+// Standardized Status Constants
+const (
+	StatusPreliminary              QualityStatus = "PRELIMINARY"
+	StatusPreliminaryNotReconciled QualityStatus = "PRELIMINARY_NOT_RECONCILED"
+	StatusReconciledProvisional     QualityStatus = "RECONCILED_PROVISIONAL"
+	StatusFinal                     QualityStatus = "FINAL"
+	StatusPartiallyReconciled       QualityStatus = "PARTIALLY_RECONCILED"
+	StatusSourceScopeConflict       QualityStatus = "SOURCE_SCOPE_CONFLICT"
+	StatusParsedZeroUnconfirmed     QualityStatus = "PARSED_ZERO_UNCONFIRMED"
+	StatusObservedZero              QualityStatus = "OBSERVED_ZERO"
+	StatusSourceParserFailure       QualityStatus = "SOURCE_PARSER_FAILURE"
+	StatusStaleContextOnly          QualityStatus = "STALE_CONTEXT_ONLY"
+	StatusProvisionalLastValid      QualityStatus = "PROVISIONAL_LAST_VALID"
+	StatusRawSpread                 QualityStatus = "RAW_SPREAD"
+	StatusAlignmentUnverified       QualityStatus = "ALIGNMENT_UNVERIFIED"
+	StatusNotABasis                 QualityStatus = "NOT_A_BASIS"
+	StatusCrossTimeSpread           QualityStatus = "CROSS_TIME_SPREAD"
+	StatusFairValueNotEvaluated     QualityStatus = "FAIR_VALUE_NOT_EVALUATED"
+	StatusNotEvaluated              QualityStatus = "NOT_EVALUATED"
+	StatusInsufficientTimestamps    QualityStatus = "INSUFFICIENT_TIMESTAMPS"
+	StatusExpiredForDay             QualityStatus = "EXPIRED_FOR_DAY"
+	StatusTriggerHistoryUnknown     QualityStatus = "TRIGGER_HISTORY_UNKNOWN"
+	StatusMixedTimePostClose        QualityStatus = "MIXED_TIME_POST_CLOSE"
+	StatusLaggedContextOnly         QualityStatus = "LAGGED_CONTEXT_ONLY"
+	StatusModelOutputUnverified     QualityStatus = "MODEL_OUTPUT_UNVERIFIED"
+	StatusFuturesIdentityUnverified QualityStatus = "FUTURES_CONTRACT_IDENTITY_UNVERIFIED"
+	StatusTimestampMissing          QualityStatus = "TIMESTAMP_MISSING"
+	StatusIndicativeQuote           QualityStatus = "INDICATIVE_QUOTE"
+	StatusBelowCustomAlertThreshold QualityStatus = "BELOW_CUSTOM_ALERT_THRESHOLD"
+)
+
 type LateSessionSection struct {
-	BusinessDate                  string        `json:"business_date"`
-	BasisPoint                    float64       `json:"basis_point"`
-	BasisRate                     float64       `json:"basis_rate"`
-	FuturesPrice                  float64       `json:"futures_price"`
-	SpotPrice                     float64       `json:"spot_price"`
-	FuturesPrice1530              float64       `json:"futures_price_1530,omitempty"`
-	BasisPoint1530                float64       `json:"basis_point_1530,omitempty"`
-	BasisAlignmentStatus          string        `json:"basis_alignment_status,omitempty"` // "VERIFIED" or "ALIGNMENT_UNVERIFIED"
+	BusinessDate                     string              `json:"business_date"`
+	FuturesContractCode              string              `json:"futures_contract_code,omitempty"`
+	FuturesContractMonth             string              `json:"futures_contract_month,omitempty"`
+	FuturesExpiryDate                string              `json:"futures_expiry_date,omitempty"`
+	FuturesContractIdentityStatus    string              `json:"futures_contract_identity_status,omitempty"`
+	IsExpiringContract               bool                `json:"is_expiring_contract,omitempty"`
+	Kospi200MonthlyOptionsExpiry     bool                `json:"kospi200_monthly_options_expiry,omitempty"`
+	Kospi200StandardFuturesExpiry    bool                `json:"kospi200_standard_futures_expiry,omitempty"`
+	BasisPoint                       float64             `json:"basis_point"`
+	BasisRate                        float64             `json:"basis_rate"`
+	FuturesPrice                     float64             `json:"futures_price"`
+	SpotPrice                        float64             `json:"spot_price"`
+	FuturesPrice1530                 float64             `json:"futures_price_1530,omitempty"`
+	BasisPoint1530                   float64             `json:"basis_point_1530,omitempty"`
+	BasisAlignmentStatus             string              `json:"basis_alignment_status,omitempty"`
+	CrossTimeSpreadStatus            string              `json:"cross_time_spread_status,omitempty"`
 
-	KOSPINetArbitrageTotal        float64       `json:"kospi_net_arbitrage_total,omitempty"`
-	KOSPINetNonArbitrageForeign   float64       `json:"kospi_net_non_arbitrage_foreign"`
-	KOSPINetNonArbitrageOrgan     float64       `json:"kospi_net_non_arbitrage_organ"`
-	KOSPINetNonArbitrageTotal     float64       `json:"kospi_net_non_arbitrage_total"`
-	KOSPIProgramTotalNet          float64       `json:"kospi_program_total_net,omitempty"`
-	ProgramReconciledStatus       string        `json:"program_reconciled_status,omitempty"` // "RECONCILED" or "NOT_RECONCILED"
+	KOSPINetArbitrageTotal           float64             `json:"kospi_net_arbitrage_total,omitempty"`
+	KOSPINetNonArbitrageForeign      float64             `json:"kospi_net_non_arbitrage_foreign"`
+	KOSPINetNonArbitrageOrgan        float64             `json:"kospi_net_non_arbitrage_organ"`
+	KOSPINetNonArbitrageTotal        float64             `json:"kospi_net_non_arbitrage_total"`
+	KOSPIProgramTotalNet             float64             `json:"kospi_program_total_net,omitempty"`
+	OriginalSnapshotArbitrageEok     float64             `json:"original_snapshot_arbitrage_eok,omitempty"`
+	OriginalSnapshotNonArbitrageEok  float64             `json:"original_snapshot_non_arbitrage_eok,omitempty"`
+	OriginalSnapshotTotalEok         float64             `json:"original_snapshot_total_eok,omitempty"`
+	NaverFollowupArbitrageEok        *float64            `json:"naver_followup_arbitrage_eok,omitempty"`
+	NaverFollowupNonArbitrageEok     *float64            `json:"naver_followup_non_arbitrage_eok,omitempty"`
+	NaverFollowupTotalEok            *float64            `json:"naver_followup_total_eok,omitempty"`
+	CrossSourceDifferenceEok         float64             `json:"cross_source_difference_eok,omitempty"`
+	CrossSourceStatus                string              `json:"cross_source_status,omitempty"`
+	CanonicalTotalEok                *float64            `json:"canonical_total_eok"`
+	ProgramReconciledStatus          string              `json:"program_reconciled_status,omitempty"`
+	InstitutionNonArbitrageStatus    string              `json:"institution_non_arbitrage_status,omitempty"`
+	InstitutionNonArbitrageSemantics string              `json:"institution_non_arbitrage_semantics,omitempty"`
 
-	LateProgramNetEok             *float64      `json:"late_program_net_eok"`
-	CloseSessionProgramNetEok     *float64      `json:"close_session_program_net_eok"`
-	CloseSessionForeignNetEok     *float64      `json:"close_session_foreign_net_eok"`
-	CloseSessionOrganNetEok       *float64      `json:"close_session_organ_net_eok"`
-	PrimaryPattern                string        `json:"primary_pattern"`
-	CapitulationScore             *float64      `json:"capitulation_score,omitempty"`
-	ShortSqueezeScore             *float64      `json:"short_squeeze_score,omitempty"`
-	WindowDressingScore           *float64      `json:"window_dressing_score,omitempty"`
-	RebalancingScore              *float64      `json:"rebalancing_score,omitempty"`
-	ExpirationArbitrageScore      *float64      `json:"expiration_arbitrage_score,omitempty"`
-	PatternDetected               bool          `json:"pattern_detected"`
-	PatternEvaluated              bool          `json:"pattern_evaluated"`
-	PatternReason                 string        `json:"pattern_reason,omitempty"`
-	Status                        QualityStatus `json:"status,omitempty"`
-	QualityFlags                  []string      `json:"quality_flags,omitempty"`
+	LateProgramNetEok                *float64            `json:"late_program_net_eok"`
+	CloseSessionProgramNetEok        *float64            `json:"close_session_program_net_eok"`
+	CloseSessionForeignNetEok        *float64            `json:"close_session_foreign_net_eok"`
+	CloseSessionOrganNetEok          *float64            `json:"close_session_organ_net_eok"`
+	PrimaryPattern                   string              `json:"primary_pattern"`
+	CapitulationScore                *float64            `json:"capitulation_score,omitempty"`
+	ShortSqueezeScore                *float64            `json:"short_squeeze_score,omitempty"`
+	WindowDressingScore              *float64            `json:"window_dressing_score,omitempty"`
+	RebalancingScore                 *float64            `json:"rebalancing_score,omitempty"`
+	ExpirationArbitrageScore         *float64            `json:"expiration_arbitrage_score,omitempty"`
+	PatternDetected                  bool                `json:"pattern_detected"`
+	PatternEvaluated                 bool                `json:"pattern_evaluated"`
+	PatternReason                    string              `json:"pattern_reason,omitempty"`
+	PatternMissingInputs             map[string][]string `json:"pattern_missing_inputs,omitempty"`
+	Status                           QualityStatus       `json:"status,omitempty"`
+	QualityFlags                     []string            `json:"quality_flags,omitempty"`
 }
-
 
 type Snapshot struct {
 	Timestamp     time.Time
@@ -118,3 +170,4 @@ type Snapshot struct {
 	LateSession   *LateSessionSection
 	Errors        map[string]error
 }
+

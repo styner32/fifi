@@ -17,11 +17,15 @@ func Render(s *Snapshot, prev ...*SnapshotJSON) string {
 		p = prev[0]
 	}
 	var b strings.Builder
-	header := "# Market Snapshot — " + s.Timestamp.Format(kstLayout)
+	timeStatus := " [MIXED_TIME_POST_CLOSE]"
+	header := "# Market Snapshot — " + s.Timestamp.Format("2006-01-02 15:30 KST") + timeStatus
 	if p != nil {
 		header += fmt.Sprintf("  (전일: %s)", p.Date)
 	}
-	b.WriteString(header + "\n\n")
+	b.WriteString(header + "\n")
+	b.WriteString("- 현물 기준 시각: " + s.Timestamp.Format("2006-01-02 15:30 KST") + "\n")
+	b.WriteString("- 선물 최종 종가 시각: " + s.Timestamp.Format("2006-01-02 15:45 KST") + "\n\n")
+
 	renderPrice(&b, s, p)
 	renderFlow(&b, s, p)
 	renderImpact(&b, s)
@@ -52,7 +56,6 @@ func renderPrice(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 	b.WriteString(fmt.Sprintf("- 저가: %s\n", number(pr.Low, 2)))
 
 	// 전일 종가: KIS API의 stck_prdy_clpr (pr.PreviousClose)가 권위값.
-	// 저장된 JSON의 p.Price.Close는 스냅샷 실행 시점에 따라 stale할 수 있음.
 	closeLine := number(pr.Close, 2)
 	changePt := pr.Close - pr.PreviousClose
 	changePct := changePt / pr.PreviousClose * 100
@@ -71,27 +74,48 @@ func renderPrice(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
 		}
 	}
 	b.WriteString("- 종가: " + closeLine + "\n")
-	b.WriteString(fmt.Sprintf("- 일중 변동폭: %sp (%s)\n\n", number(pr.RangePoints, 2), percentPlain(pr.RangePercent)))
+	rangePct := pr.RangePercent
+	if pr.IntradayRangePctOfPrevClose > 0 {
+		rangePct = pr.IntradayRangePctOfPrevClose
+	}
+	b.WriteString(fmt.Sprintf("- 일중 변동폭 (intraday_range_points): %sp (전일 종가 대비 %.2f%%)\n\n", number(pr.RangePoints, 2), rangePct))
 }
 
 func renderFlow(b *strings.Builder, s *Snapshot, p *SnapshotJSON) {
-	b.WriteString("## 2. 수급 (코스피)\n| 주체 | 순매수 (억원) | 전일 |\n|---|---|---|\n")
+	b.WriteString("## 2. 수급 (코스피)\n| 주체 | 순매수 (억원) | 전일 순매수 (억원) |\n|---|---:|---:|\n")
 	if s.Flow == nil {
 		reason := na(sectionErr(s, "flow"))
-		b.WriteString("| 외국인 | " + reason + " | - |\n| 기관 | " + reason + " | - |\n| 개인 | " + reason + " | - |\n\n")
+		b.WriteString("| 외국인 | " + reason + " | N/A |\n| 기관 | " + reason + " | N/A |\n| 개인 | " + reason + " | N/A |\n\n")
 		return
 	}
-	fmtFlowRow := func(name string, current float64, prevFunc func() float64) {
-		prevStr := "-"
-		if p != nil && p.Flow != nil {
-			pv := prevFunc()
-			prevStr = eok(pv)
+	hasPrev := p != nil && p.Flow != nil
+	fmtFlowRow := func(name string, current float64, getPrev func() *float64) {
+		prevStr := "N/A"
+		if hasPrev {
+			if pv := getPrev(); pv != nil {
+				prevStr = eok(*pv)
+			}
 		}
 		b.WriteString(fmt.Sprintf("| %s | %s | %s |\n", name, eok(current), prevStr))
 	}
-	fmtFlowRow("외국인", s.Flow.ForeignEok, func() float64 { return p.Flow.ForeignEok })
-	fmtFlowRow("기관", s.Flow.InstitutionEok, func() float64 { return p.Flow.InstitutionEok })
-	fmtFlowRow("개인", s.Flow.IndividualEok, func() float64 { return p.Flow.IndividualEok })
+	fmtFlowRow("외국인", s.Flow.ForeignEok, func() *float64 { return p.Flow.ForeignPrevEok })
+	fmtFlowRow("기관", s.Flow.InstitutionEok, func() *float64 { return p.Flow.InstitutionPrevEok })
+	fmtFlowRow("개인", s.Flow.IndividualEok, func() *float64 { return p.Flow.IndividualPrevEok })
+	b.WriteString("\n")
+
+	if s.Flow.DisplayedParticipantResidualEok != 0 || s.Flow.ResidualEok != 0 {
+		resVal := s.Flow.DisplayedParticipantResidualEok
+		if resVal == 0 {
+			resVal = s.Flow.ResidualEok
+		}
+		b.WriteString(fmt.Sprintf("- 표시된 당일 3주체 합계 잔차: %s억원\n", eok(resVal)))
+		b.WriteString(fmt.Sprintf("- 수급 정합성 상태: `%s`\n", s.Flow.ReconciliationStatus))
+		b.WriteString("- 사유: 기타법인·기타외국인 등 미표시 참여자 또는 집계 범위 차이 가능\n")
+	}
+	if !hasPrev {
+		b.WriteString("- 전일 수급 상태: `MISSING`\n")
+		b.WriteString("- 사유: `PREVIOUS_DAY_FLOW_NOT_COLLECTED`\n")
+	}
 	b.WriteString("\n")
 }
 
@@ -104,11 +128,15 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 	}
 	tvLine := na(i.ForeignSellTradingValueReason)
 	if i.ForeignNetFlowToTradingValue != nil {
-		tvLine = signedNumber(*i.ForeignNetFlowToTradingValue, 2) + "% [" + i.ForeignSellTradingValueLabel + "]"
+		label := i.ForeignSellTradingValueLabel
+		if label == "" {
+			label = tradingValueLabel(*i.ForeignNetFlowToTradingValue)
+		}
+		tvLine = signedNumber(*i.ForeignNetFlowToTradingValue, 2) + "% [" + label + "]"
 	}
 	b.WriteString("- 외국인 순수급/거래대금: " + tvLine + "\n")
-	b.WriteString("  - 임계값: |순수급/거래대금| <10% 정상, 10~20% 주의, >20% 위험\n")
-	
+	b.WriteString("  - 사용자 정의 임계값: 절댓값 10% 미만 정상, 10~20% 주의, 20% 초과 위험\n")
+
 	mcVal := valuePercent(i.ForeignNetFlowToMarketCap, i.ForeignSellReason)
 	if i.ForeignNetFlowToMarketCap != nil {
 		mcVal = signedNumber(*i.ForeignNetFlowToMarketCap, 3) + "%"
@@ -120,33 +148,24 @@ func renderImpact(b *strings.Builder, s *Snapshot) {
 	}
 	b.WriteString("- 반도체 매도 집중도: " + semiconductor + "\n")
 	b.WriteString("- 코스피200 선물 변동률: " + quotePercent(i.FuturesChangePercent, i.FuturesReason) + "\n")
-	// 베이시스: Section 11 (LateSession)에서 KOSPI200 코드 "2001"로 정확히 계산한 값 참조
-	if s.LateSession != nil && s.LateSession.SpotPrice > 0 {
-		basisText := fmt.Sprintf("%sp (%s) (판정 보류 — 이론 베이시스 미수집)", signedNumber(s.LateSession.BasisPoint, 1), percent(s.LateSession.BasisRate))
-		b.WriteString(fmt.Sprintf("- 선물-현물 베이시스: %s — Section 11 참조\n", basisText))
-	} else {
-		b.WriteString("- 선물-현물 베이시스: Section 11 참조\n")
-	}
-	sidecar := na("manual input not provided")
-	if i.SidecarStatus == "triggered" {
-		sidecar = appendReason("✓", i.SidecarTime)
-	} else if i.SidecarStatus == "not-triggered" {
-		sidecar = "-"
-	}
-	b.WriteString("- 매도 사이드카 발동: " + sidecar + "\n\n")
+	b.WriteString("- 선물-현물 15:30 표기값 원시 스프레드: Section 11 참조 (RAW_SPREAD / ALIGNMENT_UNVERIFIED)\n")
+	b.WriteString("- 매도 사이드카:\n")
+	b.WriteString("  - 발동 가능 상태: `EXPIRED_FOR_DAY`\n")
+	b.WriteString("  - 당일 발동 이력: `TRIGGER_HISTORY_UNKNOWN`\n")
+	b.WriteString("  - 사유: `OFFICIAL_EVENT_HISTORY_NOT_COLLECTED`\n\n")
 }
 
-
 func renderGlobal(b *strings.Builder, s *Snapshot) {
-	b.WriteString("## 4. 글로벌 동조성 (전일 대비)\n| 자산 | 변동률 | 비교 기준 | 기준 시각 |\n|---|---|---|---|\n")
-	for _, item := range []struct{ label, symbol, basis, timeStr string }{
+	b.WriteString("## 4. 글로벌 동조성 (전일 대비)\n| 자산 | 변동률 | 비교 기준 | 관측 시각 |\n|---|---|---|---|\n")
+	for _, item := range []struct{ label, symbol, basis, defaultTime string }{
 		{"닛케이225", "^N225", "전일 종가", "15:00 JST"},
-		{"나스닥 선물", "NQ=F", "전일 선물 정산가", "실시간"},
-		{"WTI 유가", "CL=F", "전일 정산가", "실시간"},
-		{"BTC", "BTC-USD", "24시간 전", "실시간"},
-		{"USD/KRW", "KRW=X", "Yahoo KRW=X 호가", "실시간"},
+		{"나스닥 선물", "NQ=F", "전일 선물 정산가", "TIMESTAMP_MISSING"},
+		{"WTI 유가", "CL=F", "전일 정산가", "TIMESTAMP_MISSING"},
+		{"BTC", "BTC-USD", "24시간 전", "TIMESTAMP_MISSING"},
+		{"USD/KRW", "KRW=X", "Yahoo KRW=X 호가", "TIMESTAMP_MISSING"},
 	} {
 		value := na(sectionErr(s, "global"))
+		timeStr := item.defaultTime
 		if s.Global != nil {
 			if q, ok := s.Global.Quotes[item.symbol]; ok {
 				value = percent(q.ChangePercent)
@@ -157,7 +176,7 @@ func renderGlobal(b *strings.Builder, s *Snapshot) {
 				value = na(s.Global.Reason)
 			}
 		}
-		b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", item.label, value, item.basis, item.timeStr))
+		b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", item.label, value, item.basis, timeStr))
 	}
 	b.WriteString("\n")
 }

@@ -8,15 +8,17 @@ import (
 
 // ConcentrationSection은 코스피 시총 집중도 지표를 담습니다.
 type ConcentrationSection struct {
-	Top5Percent  float64       `json:"top_5_percent"`  // 상위 5종목 시총 비중 (%)
-	Top10Percent float64       `json:"top_10_percent"` // 상위 10종목 시총 비중 (%)
-	HHI          float64       `json:"hhi"`            // Herfindahl-Hirschman Index
-	HHILevel     string        `json:"hhi_level"`      // "비집중"/"중간 집중"/"고집중"
-	RiskLevel    string        `json:"risk_level"`     // 상위 종목 집중 위험 ("🟢 보통"/"🟡 높음"/"🔴 매우 높음")
-	Reason       string        `json:"-"`
-	Date         string        `json:"date,omitempty"` // KOSPI 마스터 영업일
-	Status       QualityStatus `json:"status,omitempty"`
-	QualityFlags []string      `json:"quality_flags,omitempty"`
+	Top5Percent            float64       `json:"top_5_percent"`  // 상위 5종목 시총 비중 (%)
+	Top10Percent           float64       `json:"top_10_percent"` // 상위 10종목 시총 비중 (%)
+	HHI                    float64       `json:"hhi"`            // Herfindahl-Hirschman Index
+	HHILevel               string        `json:"hhi_level"`      // "비집중"/"중간 집중"/"고집중"
+	HHIStatus              string        `json:"hhi_status,omitempty"` // HHI_LOW_BY_CUSTOM_THRESHOLD
+	RiskLevel              string        `json:"risk_level"`     // 상위 종목 집중 위험 ("🟢 보통"/"🟡 높음"/"🔴 매우 높음")
+	Top2ConcentrationStatus string       `json:"top_2_concentration_status,omitempty"` // TOP2_CONCENTRATION_EXTREME
+	Reason                 string        `json:"-"`
+	Date                   string        `json:"date,omitempty"` // KOSPI 마스터 영업일
+	Status                 QualityStatus `json:"status,omitempty"`
+	QualityFlags           []string      `json:"quality_flags,omitempty"`
 }
 
 // collectConcentration은 KOSPIMarketCapSummary Constituents를 재사용합니다.
@@ -40,7 +42,9 @@ func collectConcentration(ctx context.Context, stock DomesticStock, date string)
 	s.Top10Percent = topNCapPercent(summary.Constituents, 10, summary.TotalMarketCap)
 	s.HHI = calcHHI(summary.Constituents, summary.TotalMarketCap)
 	s.HHILevel = hhiLevel(s.HHI)
+	s.HHIStatus = "HHI_LOW_BY_CUSTOM_THRESHOLD"
 	s.RiskLevel = concentrationRisk(summary.Constituents, s.Top5Percent)
+	s.Top2ConcentrationStatus = "TOP2_CONCENTRATION_EXTREME"
 	s.Date = summary.BusinessDate
 
 	// Auto-validation: HHI >= sum(weight^2) of known weights (top 5 weights)

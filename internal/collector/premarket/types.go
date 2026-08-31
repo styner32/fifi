@@ -16,6 +16,7 @@ type DomesticStock interface {
 	InquireIndexPrice(context.Context, string) (*auth.RESTResponse, error)
 	InquirePrice(context.Context, string) (*auth.RESTResponse, error)
 	InquireVKOSPIPrice(context.Context, string) (*auth.RESTResponse, error)
+	ResolveVKOSPICode(context.Context, []string) (string, error)
 	KOSPIMarketCapSummary(context.Context, string) (*domesticstock.KOSPIMarketCapSummary, error)
 	MarketFunds(context.Context, string) (*auth.RESTResponse, error)
 }

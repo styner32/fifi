@@ -155,9 +155,12 @@ var _ = Describe("market structure collectors", func() {
 	})
 
 	It("VKOSPI는 KIS 응답을 우선 사용", func() {
-		resp := &auth.RESTResponse{Body: map[string]any{"output": map[string]any{
-			"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
-		}}}
+		resp := &auth.RESTResponse{Body: map[string]any{
+			"rt_cd": "0",
+			"output": map[string]any{
+				"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
+			},
+		}}
 		got, err := collectVKOSPI(context.Background(), vkospiFake{resp}, nil, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Source).To(Equal("KIS"))

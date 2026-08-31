@@ -60,12 +60,18 @@ func fillBasis(ctx context.Context, deps Deps, date string, sec *LateSessionSect
 		return fmt.Errorf("KOSPI200 spot price 'bstp_nmix_prpr' missing")
 	}
 
-	// 2) 최근월물 선물 코드 조회
+	// 2) 최근월물 선물 코드 및 메타데이터 조회
 	resolvedContract, err := deps.DomesticFuture.ResolveNearMonthKOSPI200Futures(ctx, date)
 	if err != nil {
 		return fmt.Errorf("resolve near-month futures: %w", err)
 	}
 	futuresCode := resolvedContract.Record.ShortCode
+	sec.FuturesContractCode = futuresCode
+	sec.FuturesContractMonth = resolvedContract.Record.MonthClassCode
+	sec.FuturesExpiryDate = resolvedContract.Record.StandardCode
+	if t, parseErr := time.Parse("20060102", date); parseErr == nil {
+		sec.IsExpiringContract = checkOptionExpirationDay(t)
+	}
 
 	// 3) 선물 가격 조회
 	futuresResp, err := deps.DomesticFuture.InquirePrice(ctx, "F", futuresCode)
@@ -92,9 +98,9 @@ func fillBasis(ctx context.Context, deps Deps, date string, sec *LateSessionSect
 	if spotPrice > 0 {
 		sec.BasisRate = (sec.BasisPoint / spotPrice) * 100
 	}
-	sec.BasisAlignmentStatus = "ALIGNMENT_UNVERIFIED"
+	sec.CrossTimeSpreadStatus = "NOT_A_BASIS / CROSS_TIME_SPREAD"
 
-	// 4) 15:30 선물 가격 조회 (동시점 베이시스 계산용)
+	// 4) 15:30 선물 가격 조회 (동시점 원시 스프레드 계산용)
 	now := time.Now().In(time.FixedZone("KST", 9*3600))
 	if now.Hour() > 15 || (now.Hour() == 15 && now.Minute() >= 30) {
 		if fPrice1530, err := getFuturesPriceAtTime(ctx, deps.DomesticFuture, futuresCode, date, "153000"); err == nil && fPrice1530 > 0 {
@@ -108,6 +114,7 @@ func fillBasis(ctx context.Context, deps Deps, date string, sec *LateSessionSect
 		sec.FuturesPrice1530 = futuresPrice
 		sec.BasisPoint1530 = futuresPrice - spotPrice
 	}
+	sec.BasisAlignmentStatus = "RAW_SPREAD / ALIGNMENT_UNVERIFIED"
 
 	return nil
 }
@@ -167,12 +174,16 @@ func fillProgramTradeToday(ctx context.Context, deps Deps, sec *LateSessionSecti
 		sec.KOSPIProgramTotalNet = sumAbt + sumNabt
 	}
 
+	sec.OriginalSnapshotArbitrageEok = sec.KOSPINetArbitrageTotal
+	sec.OriginalSnapshotNonArbitrageEok = sec.KOSPINetNonArbitrageTotal
+	sec.OriginalSnapshotTotalEok = sec.KOSPIProgramTotalNet
+
+	// Check if there is conflict or unverified zero status
 	if (!foreignMatched || !organMatched || !totalMatched) && (sec.KOSPINetArbitrageTotal == 0 && sec.KOSPINetNonArbitrageTotal == 0) {
-		sec.ProgramReconciledStatus = "NOT_RECONCILED"
+		sec.ProgramReconciledStatus = string(StatusSourceScopeConflict)
 	} else {
 		sec.ProgramReconciledStatus = "RECONCILED"
 	}
-
 
 	return nil
 }
@@ -335,6 +346,13 @@ func evaluateLateSessionPatterns(priceSec *PriceSection, sec *LateSessionSection
 		sec.PatternReason = "INSUFFICIENT_TIMESTAMPS"
 		sec.Status = StatusInsufficientData
 		sec.QualityFlags = []string{"LATE_SESSION_DATA_MISSING"}
+		sec.PatternMissingInputs = map[string][]string{
+			"Late-Session Capitulation":   {"PRICE_SAMPLE_15_00", "PRICE_SAMPLE_15_20", "PRICE_SAMPLE_15_30", "INTERVAL_VOLUME", "INTERVAL_PROGRAM_FLOW", "BREADTH_DELTA", "VKOSPI_CLOSE"},
+			"Late-Session Short Squeeze":  {"SHORT_SELL_VOLUME", "SECURITIES_BORROW_BALANCE", "FUTURES_OPEN_INTEREST", "INTRADAY_FUTURES_PRICE"},
+			"Window Dressing":             {"CLOSING_AUCTION_PRICE_IMPACT", "CLOSING_AUCTION_VOLUME", "PARTICIPANT_FLOW"},
+			"ETF Rebalancing Impact":       {"OFFICIAL_REBALANCE_EVENT", "CLOSING_AUCTION_ETF_FLOW", "INDEX_CONSTITUENT_CHANGES"},
+			"Expiration Basis Arbitrage": {"FUTURES_CONTRACT_ID", "EXPIRING_CONTRACT_PRICE_AT_15_20", "SYNCHRONIZED_SPOT_PRICE", "RECONCILED_PROGRAM_ARBITRAGE_FLOW"},
+		}
 		return
 	}
 

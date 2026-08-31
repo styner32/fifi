@@ -25,6 +25,7 @@ type SnapshotJSON struct {
 	Global        *GlobalSectionJSON    `json:"global,omitempty"`
 	Macro         *MacroSectionJSON     `json:"macro,omitempty"`
 	LateSession   *LateSessionSection   `json:"late_session,omitempty"`
+	Errors        map[string]string     `json:"errors,omitempty"`
 }
 
 // GlobalSectionJSON은 GlobalSection에서 비교에 필요한 필드만 추출합니다.
@@ -55,6 +56,14 @@ func (s *Snapshot) ToJSON() *SnapshotJSON {
 		Regime:        s.Regime,
 		Concentration: s.Concentration,
 		LateSession:   s.LateSession,
+	}
+	if len(s.Errors) > 0 {
+		j.Errors = make(map[string]string, len(s.Errors))
+		for k, v := range s.Errors {
+			if v != nil {
+				j.Errors[k] = v.Error()
+			}
+		}
 	}
 	if s.Global != nil && len(s.Global.Quotes) > 0 {
 		g := &GlobalSectionJSON{Quotes: map[string]QuoteSummary{}}
