@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fifi/internal/auth"
@@ -88,7 +89,9 @@ var (
 const defaultKOSPIActualPBRRPM = 18
 
 type Service struct {
-	client *auth.KIClient
+	client            *auth.KIClient
+	vkospiMu          sync.RWMutex
+	resolvedVKOSPICode string
 }
 
 type RSIResult struct {
@@ -208,11 +211,6 @@ type actualPBRCacheEntry struct {
 }
 
 type actualPBRCache map[string]actualPBRCacheEntry
-
-type requestPacer struct {
-	interval    time.Duration
-	nextAllowed time.Time
-}
 
 type actualPBRLookupResult struct {
 	PBR           float64
@@ -540,41 +538,6 @@ func firstOutputRow(resp *auth.RESTResponse, outputKey string) map[string]any {
 		return nil
 	}
 	return rows[0]
-}
-
-func newRequestPacer(rpm int) *requestPacer {
-	if rpm <= 0 {
-		return &requestPacer{}
-	}
-
-	return &requestPacer{
-		interval: time.Minute / time.Duration(rpm),
-	}
-}
-
-func (p *requestPacer) Wait(ctx context.Context) (time.Duration, error) {
-	if p == nil || p.interval <= 0 {
-		return 0, nil
-	}
-
-	now := time.Now()
-	if p.nextAllowed.After(now) {
-		waitDuration := p.nextAllowed.Sub(now)
-		timer := time.NewTimer(waitDuration)
-		defer timer.Stop()
-
-		select {
-		case <-ctx.Done():
-			return waitDuration, ctx.Err()
-		case <-timer.C:
-		}
-
-		p.nextAllowed = time.Now().Add(p.interval)
-		return waitDuration, nil
-	}
-
-	p.nextAllowed = time.Now().Add(p.interval)
-	return 0, nil
 }
 
 func getEnvInt(key string, defaultValue int) int {

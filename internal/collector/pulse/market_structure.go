@@ -194,41 +194,29 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 	lastTS := CapTimeAt1530(now)
 	freshness, ageSecs, staleReason := DetermineFreshness("KRX", lastTS, now, false)
 
-	for _, code := range []string{"0503", "2050"} {
-		resp, err := stock.InquireVKOSPIPrice(ctx, code)
-		if err == nil {
-			if row := resp.FirstRow("output"); row != nil {
-				value, valueOK := parse.Num(row, "bstp_nmix_prpr")
-				change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
-				if valueOK && value >= 5 && value <= 100 {
-					return VolatilitySnapshot{
-						Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
-						LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
-					}, nil
+	if stock != nil {
+		code, resolveErr := stock.ResolveVKOSPICode(ctx, nil)
+		if resolveErr == nil {
+			resp, err := stock.InquireVKOSPIPrice(ctx, code)
+			if err == nil && resp != nil && resp.IsOK() {
+				if row := resp.FirstRow("output"); row != nil {
+					value, valueOK := parse.Num(row, "bstp_nmix_prpr")
+					change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
+					if valueOK && value >= 5 && value <= 100 {
+						return VolatilitySnapshot{
+							Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
+							LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
+						}, nil
+					}
 				}
+			} else if err != nil {
+				lastErr = err
 			}
 		} else {
-			lastErr = err
+			lastErr = resolveErr
 		}
 	}
-	code, resolveErr := stock.ResolveVKOSPICode(ctx, nil)
-	if resolveErr == nil && code != "0503" && code != "2050" {
-		resp, err := stock.InquireVKOSPIPrice(ctx, code)
-		if err == nil {
-			if row := resp.FirstRow("output"); row != nil {
-				value, valueOK := parse.Num(row, "bstp_nmix_prpr")
-				change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
-				if valueOK && value >= 5 && value <= 100 {
-					return VolatilitySnapshot{
-						Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
-						LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
-					}, nil
-				}
-			}
-		} else if err != nil {
-			lastErr = err
-		}
-	}
+
 	if naverClient != nil {
 		quote, err := naverClient.GetIndexQuote(ctx, "VKOSPI")
 		if err == nil && quote != nil && quote.Price >= 5 && quote.Price <= 100 {
@@ -238,13 +226,11 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 			}, nil
 		}
 	}
+
 	if lastErr != nil {
 		return VolatilitySnapshot{}, lastErr
 	}
-	if resolveErr != nil {
-		return VolatilitySnapshot{}, resolveErr
-	}
-	return VolatilitySnapshot{}, fmt.Errorf("VKOSPI KIS/Naver 조회 실패")
+	return VolatilitySnapshot{}, fmt.Errorf("VKOSPI collection unavailable")
 }
 
 func collectContributions(ctx context.Context, stock contributionStock, businessDate string, idx IndexLevel) ([]IndexContribution, error) {

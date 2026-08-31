@@ -34,7 +34,7 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 	if s.Price != nil && s.Price.PreviousClose > 0 {
 		indexChange = (s.Price.Close - s.Price.PreviousClose) / s.Price.PreviousClose * 100
 	}
-	s.Volatility = collectVolatility(ctx, deps.DomesticStock, deps.Naver, deps.Yahoo, indexChange, date, opts)
+	s.Volatility = collectVolatility(ctx, deps.DomesticStock, deps.Naver, deps.Yahoo, deps.Facts, indexChange, date, opts)
 	// Section 8: 신용잔고 + 반대매매
 	if section, err := collectCredit(ctx, deps.DomesticStock, deps.KOFIA, date); err != nil {
 		s.Errors["credit"] = err

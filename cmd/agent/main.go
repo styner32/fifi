@@ -21,6 +21,7 @@ import (
 	"github.com/fifi/internal/external/kofia"
 	"github.com/fifi/internal/external/naver"
 	"github.com/fifi/internal/external/yahoo"
+	"github.com/fifi/internal/market/facts"
 )
 
 func main() {
@@ -76,6 +77,7 @@ func runMarketSnapshot(args []string) error {
 		Yahoo:          yahooClient,
 		Naver:          naverClient,
 		KOFIA:          kofiaClient,
+		Facts:          facts.NewStore(os.Getenv("DATABASE_URL")),
 	}, opts)
 	// ── 이전 날짜 스냅샷 로드 (비교용) ──────────────────────────────────────────
 	outDir := envDefault("SNAPSHOT_OUTPUT_DIR", ".cache/snapshots")

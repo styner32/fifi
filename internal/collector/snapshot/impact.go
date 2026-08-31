@@ -9,30 +9,38 @@ import (
 
 type ImpactSection struct {
 	// 거래대금 대비 외인 순수급 강도 (주요 지표)
-	ForeignNetFlowToTradingValue *float64
-	ForeignSellTradingValueLabel string // "정상"/"주의"/"위험"
-	ForeignSellTradingValueReason string
+	ForeignNetFlowToTradingValue  *float64 `json:"foreign_net_flow_to_trading_value"`
+	ForeignSellTradingValueLabel  string   `json:"foreign_sell_trading_value_label"` // "BELOW_CUSTOM_ALERT_THRESHOLD"/"주의"/"위험"
+	ForeignSellTradingValuePolicy string   `json:"foreign_sell_trading_value_policy"` // "abs(ratio)<10%"
+	ForeignSellTradingValueReason string   `json:"foreign_sell_trading_value_reason,omitempty"`
 	// 시총 대비 외인 순수급 (참고용)
-	ForeignNetFlowToMarketCap *float64
-	ForeignSellReason         string
+	ForeignNetFlowToMarketCap *float64 `json:"foreign_net_flow_to_market_cap"`
+	TotalKospiMarketCapEok    float64  `json:"total_kospi_market_cap_eok,omitempty"`
+	ForeignSellReason         string   `json:"foreign_sell_reason,omitempty"`
 	// 반도체
-	SemiconductorSellConcentrationPct *float64
-	SemiconductorReason               string
+	SemiconductorSellConcentrationPct *float64 `json:"semiconductor_sell_concentration_pct"`
+	SemiconductorReason               string   `json:"semiconductor_reason,omitempty"`
 	// 선물
-	FuturesChangePercent *float64
-	FuturesPrice         *float64
-	FuturesCode          string
-	FuturesReason        string
+	FuturesChangePercent *float64 `json:"futures_change_percent"`
+	FuturesPrice         *float64 `json:"futures_price"`
+	FuturesCode          string   `json:"futures_code"`
+	FuturesReason        string   `json:"futures_reason,omitempty"`
 	// 사이드카
-	SidecarStatus string
-	SidecarTime   string
-	// 베이시스는 Section 11 (LateSession)으로 통합 — 중복 API 호출 및 코드 불일치(0002 vs 2001) 제거
+	SidecarStatus    string `json:"sidecar_status"`
+	SidecarTime      string `json:"sidecar_time,omitempty"`
+	EligibilityState string `json:"eligibility_state"` // "EXPIRED_FOR_DAY"
+	TriggerState     string `json:"trigger_state"`     // "TRIGGER_HISTORY_UNKNOWN"
 }
 
 // collectImpact computes trading-value sell pressure and semiconductor concentration.
 // price is used for KOSPI daily trading value (Fix 2).
 func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSection, price *PriceSection, opts Options) *ImpactSection {
-	section := &ImpactSection{SidecarStatus: normalizeSidecar(opts.SidecarStatus), SidecarTime: strings.TrimSpace(opts.SidecarTime)}
+	section := &ImpactSection{
+		SidecarStatus:    normalizeSidecar(opts.SidecarStatus),
+		SidecarTime:      strings.TrimSpace(opts.SidecarTime),
+		EligibilityState: "EXPIRED_FOR_DAY",
+		TriggerState:     "TRIGGER_HISTORY_UNKNOWN",
+	}
 	if flow == nil {
 		section.ForeignSellReason = "flow section unavailable"
 		section.ForeignSellTradingValueReason = "flow section unavailable"
@@ -43,6 +51,7 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 			pct := flow.ForeignEok / price.TradingValueEok * 100
 			section.ForeignNetFlowToTradingValue = ptr(pct)
 			section.ForeignSellTradingValueLabel = tradingValueLabel(pct)
+			section.ForeignSellTradingValuePolicy = "abs(ratio)<10%"
 		} else {
 			section.ForeignSellTradingValueReason = "trading value unavailable"
 		}
@@ -52,6 +61,7 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 		} else if summary, err := deps.DomesticStock.KOSPIMarketCapSummary(ctx, date); err != nil {
 			section.ForeignSellReason = err.Error()
 		} else {
+			section.TotalKospiMarketCapEok = summary.TotalMarketCap
 			section.ForeignNetFlowToMarketCap = signedPercent(flow.ForeignEok, summary.TotalMarketCap)
 		}
 		// 반도체
@@ -62,8 +72,6 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 		}
 	}
 	section.collectFutures(ctx, deps.DomesticFuture, date)
-	// 베이시스는 Section 11 (LateSession.fillBasis)에서 KOSPI200 코드 "2001"로 정확히 계산.
-	// Section 3의 "0002" 코드 사용은 필드 불일치(현물=10057 vs 정상=1459)를 유발하여 제거됨.
 	return section
 }
 
@@ -72,9 +80,9 @@ func tradingValueLabel(pct float64) string {
 	switch {
 	case absPct < 10:
 		if pct < 0 {
-			return "자체 경보 임계치 미만이나 의미 있는 순매도"
+			return "BELOW_CUSTOM_ALERT_THRESHOLD (순매도)"
 		}
-		return "정상"
+		return "BELOW_CUSTOM_ALERT_THRESHOLD [정상]"
 	case absPct < 20:
 		return "주의"
 	default:

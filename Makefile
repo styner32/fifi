@@ -1,6 +1,6 @@
 CMD_DIR ?= cmd
-DATABASE_URL ?= postgresql://sunjinlee@localhost:5432/dart?sslmode=disable
-TEST_DATABASE_URL ?= postgresql://sunjinlee@localhost:5432/dart_test?sslmode=disable
+DATABASE_URL ?= postgresql://sunjinlee@localhost:5433/dart?sslmode=disable
+TEST_DATABASE_URL ?= postgresql://sunjinlee@localhost:5433/dart_test?sslmode=disable
 MIGRATIONS_DIR ?= internal/db/migrations
 
 .PHONY: run build test takesnapshot creditbalance now dart-filing-cli dart-filing-cli-companies dart-filing-cli-company dart-filing-api dart-filing-worker dart-filing-web dart-filing-web-build migrate-up migrate-down migrate-create migrate-test-redo submodule-update
@@ -54,6 +54,12 @@ dart-filing-api: ## Run DART Filing API server
 
 dart-filing-worker: ## Run DART Filing Worker
 	go run ./cmd/dart-filing-worker
+
+market-collector: ## Run market collector daemon
+	go run ./cmd/market-collector run
+
+market-collector-backfill: ## Backfill facts from pulse and snapshots
+	go run ./cmd/market-collector backfill
 
 dart-filing-web: ## Run DART Filing Web Frontend dev server
 	npm --prefix web run dev

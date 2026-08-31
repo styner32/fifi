@@ -35,29 +35,25 @@ func renderMacro(b *strings.Builder, s *Snapshot) {
 	b.WriteString("## 6. 매크로\n")
 	m := s.Macro
 	if m == nil {
-		b.WriteString("- " + na(sectionErr(s, "macro")) + "\n")
+		b.WriteString("- " + na(sectionErr(s, "macro")) + "\n\n")
 		return
 	}
 	if q, ok := m.Quotes["KRW=X"]; ok {
-		line := number(q.Price, 2)
-		if m.USDKRWMonthStart != nil && m.USDKRWMonthStartPct != nil {
-			line += fmt.Sprintf(" (%d월초 %s 대비 %s)", int(s.Timestamp.Month()), number(*m.USDKRWMonthStart, 0), percent(*m.USDKRWMonthStartPct))
-		}
-		b.WriteString("- USD/KRW: " + line + "\n")
+		b.WriteString(fmt.Sprintf("- USD/KRW Yahoo `KRW=X` indicative quote:\n  - 값: %s\n  - 관측 시각: TIMESTAMP_MISSING\n  - 상태: `INDICATIVE_QUOTE / TIMESTAMP_MISSING`\n", number(q.Price, 2)))
 	} else {
-		b.WriteString("- USD/KRW: " + na(m.Reason) + "\n")
+		b.WriteString("- USD/KRW Yahoo `KRW=X` indicative quote: " + na(m.Reason) + "\n")
 	}
 	if q, ok := m.Quotes["CL=F"]; ok {
-		b.WriteString("- WTI: $" + number(q.Price, 2) + "\n")
+		b.WriteString(fmt.Sprintf("- WTI:\n  - 값: $%s\n  - 관측 시각: TIMESTAMP_MISSING\n", number(q.Price, 2)))
 	} else {
 		b.WriteString("- WTI: " + na(m.Reason) + "\n")
 	}
 	if q, ok := m.Quotes["^TNX"]; ok {
-		// ^TNX regularMarketPrice is already in percent units (e.g. 4.52 = 4.52%)
-		b.WriteString("- 미국 10년물: " + number(q.Price, 2) + "%\n")
+		b.WriteString(fmt.Sprintf("- 미국 10년물:\n  - 값: %s%%\n  - 관측 시각: TIMESTAMP_MISSING\n  - 상태: `TIMESTAMP_MISSING`\n", number(q.Price, 2)))
 	} else {
 		b.WriteString("- 미국 10년물: " + na(m.Reason) + "\n")
 	}
+	b.WriteString("\n")
 }
 
 func sectionErr(s *Snapshot, section string) string {

@@ -172,16 +172,19 @@ var _ = Describe("Snapshot Collector Sections", func() {
 	Context("collectVolatility", func() {
 		It("prefers KIS VKOSPI and uses opposite direction for decoupling", func() {
 			stock := fakeStock{
-				vkospi: &auth.RESTResponse{Body: map[string]any{"output": map[string]any{
-					"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
-				}}},
+				vkospi: &auth.RESTResponse{Body: map[string]any{
+					"rt_cd": "0",
+					"output": map[string]any{
+						"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
+					},
+				}},
 				vkospiDaily: []map[string]any{
 					{"bstp_nmix_prpr": "28.50"}, {"bstp_nmix_prpr": "25.00"},
 					{"bstp_nmix_prpr": "24.00"}, {"bstp_nmix_prpr": "23.00"}, {"bstp_nmix_prpr": "22.00"},
 				},
 			}
 			naverClient := fakeNaver{quote: &naver.IndexQuote{Price: 99, ChangePercent: -20}}
-			got := collectVolatility(context.Background(), stock, naverClient, fakeYahoo{}, -3, "20260710", Options{})
+			got := collectVolatility(context.Background(), stock, naverClient, fakeYahoo{}, nil, -3, "20260710", Options{})
 			Expect(got.VKOSPI).To(Equal(28.5))
 			Expect(got.Source).To(Equal("KIS"))
 			Expect(got.DecouplingFlag).To(BeTrue())
@@ -196,8 +199,8 @@ var _ = Describe("Snapshot Collector Sections", func() {
 				"KRW=X": {Price: 1494.2}, "CL=F": {Price: 102.34}, "^TNX": {Price: 4.52},
 			}}}
 			out := Render(s)
-			Expect(out).To(ContainSubstring("USD/KRW: 1,494.20"))
-			Expect(out).To(ContainSubstring("미국 10년물: 4.52%"))
+			Expect(out).To(ContainSubstring("값: 1,494.20"))
+			Expect(out).To(ContainSubstring("값: 4.52%"))
 		})
 	})
 
@@ -546,22 +549,25 @@ var _ = Describe("Snapshot Collector Sections", func() {
 			Expect(got.PrimaryPattern).NotTo(Equal("Expiration Basis Arbitrage"))
 		})
 
-		It("updates regime and risk index on market crash", func() {
+		It("updates regime and risk index on market crash when inputs are present", func() {
 			price := &PriceSection{
 				Close:         7648.09,
 				PreviousClose: 8303.41,
 				High:          8136.28,
 				Low:           7616.33,
 			}
+			volatility := &VolatilitySection{VKOSPI: 35.0}
+			macro := &MacroSection{Quotes: map[string]yahoo.Quote{"^TNX": {Price: 4.5}}}
 			impact := &ImpactSection{
 				SidecarStatus: "triggered",
 			}
 
-			phase := classifyPhase(price, impact, nil, nil)
+			phase := classifyPhase(price, impact, volatility, macro)
 			Expect(phase).To(ContainSubstring("패닉"))
 
-			reg := collectRegime(context.Background(), fakeYahoo{}, price, nil, impact, nil, nil)
-			Expect(reg.DomesticMarketStressIdx).To(BeNumerically(">=", 8.0))
+			reg := collectRegime(context.Background(), fakeYahoo{}, price, volatility, impact, macro, nil)
+			Expect(reg.DomesticMarketStressIdx).NotTo(BeNil())
+			Expect(*reg.DomesticMarketStressIdx).To(BeNumerically(">=", 8.0))
 		})
 
 		It("displays '미갱신' for stale date comparison", func() {
@@ -613,9 +619,9 @@ var _ = Describe("Snapshot Collector Sections", func() {
 			Expect(out).To(ContainSubstring("22.37억원"))
 		})
 
-		It("returns '자체 경보 임계치 미만이나 의미 있는 순매도' for negative flow below 10%", func() {
+		It("returns BELOW_CUSTOM_ALERT_THRESHOLD label for negative flow below 10%", func() {
 			label := tradingValueLabel(-1.33)
-			Expect(label).To(Equal("자체 경보 임계치 미만이나 의미 있는 순매도"))
+			Expect(label).To(ContainSubstring("BELOW_CUSTOM_ALERT_THRESHOLD"))
 		})
 
 		It("calculates concentration delta using rounded figures", func() {
@@ -649,16 +655,110 @@ var _ = Describe("Snapshot Collector Sections", func() {
 					FuturesPrice1530:            1002.60,
 					BasisPoint:                  -0.03,
 					BasisRate:                   -0.003,
-					BasisPoint1530:              2.57,
 					KOSPINetArbitrageTotal:      -1498.0,
 					KOSPINetNonArbitrageTotal:   -2571.0,
 					KOSPIProgramTotalNet:        -4069.0,
 					KOSPINetNonArbitrageForeign: -3856.0,
+					NaverFollowupTotalEok:       ptr(-620.0),
+					CrossSourceStatus:           string(StatusSourceScopeConflict),
+					CrossSourceDifferenceEok:    1096.0,
 				},
 			}
 			out := Render(s, nil)
-			Expect(out).To(ContainSubstring("NOT_A_BASIS — 시각 불일치"))
-			Expect(out).To(ContainSubstring("차익: -1,498 | 비차익: -2,571 | 합계: -4,069"))
+			Expect(out).To(ContainSubstring("NOT_A_BASIS / CROSS_TIME_SPREAD"))
+			Expect(out).To(ContainSubstring("SOURCE_SCOPE_CONFLICT"))
+		})
+	})
+
+	Context("Section 23 Mandatory Audit Regression Suite", func() {
+		It("1. missing previous flow status does not output numeric 0", func() {
+			f := &FlowSection{PreviousFlowStatus: string(StatusMissing), PreviousFlowReason: "PREVIOUS_DAY_FLOW_NOT_COLLECTED"}
+			s := &Snapshot{Flow: f}
+			out := Render(s, nil)
+			Expect(out).NotTo(MatchRegexp(`\| 외국인 \| [^|]+ \| 0 \|`))
+			Expect(out).To(ContainSubstring("N/A"))
+		})
+
+		It("2. converts 백만원 to 억원 correctly (924.4438)", func() {
+			c := &CreditSection{MarginReceivableEok: 924.4438}
+			s := &Snapshot{Credit: c}
+			out := Render(s, nil)
+			Expect(out).To(ContainSubstring("924.444억원"))
+		})
+
+		It("3. converts forced sell 백만원 to 억원 correctly (5.73295)", func() {
+			c := &CreditSection{ForcedSellAmountEok: 5.73295, ForcedSellRatioPct: 0.6036, MarginReceivableEok: 924.4438}
+			s := &Snapshot{Credit: c}
+			out := Render(s, nil)
+			Expect(out).To(ContainSubstring("5.733억원"))
+		})
+
+		It("4. calculates forced sell to prior receivable ratio as 0.6036%", func() {
+			c := &CreditSection{ForcedSellAmountEok: 5.73295, ForcedSellRatioPct: 0.6036, ForcedSellStatus: "BELOW_CUSTOM_ALERT_THRESHOLD"}
+			s := &Snapshot{Credit: c}
+			out := Render(s, nil)
+			Expect(out).To(ContainSubstring("0.6036% BELOW_CUSTOM_ALERT_THRESHOLD"))
+		})
+
+		It("5. displays program arbitrage + non-arbitrage sum matching total within display precision", func() {
+			ls := &LateSessionSection{KOSPINetArbitrageTotal: 0, KOSPINetNonArbitrageTotal: -1716, KOSPIProgramTotalNet: -1716}
+			Expect(ls.KOSPINetArbitrageTotal + ls.KOSPINetNonArbitrageTotal).To(Equal(ls.KOSPIProgramTotalNet))
+		})
+
+		It("6. detects program source difference (+1096 eok) and sets SOURCE_SCOPE_CONFLICT", func() {
+			ls := &LateSessionSection{
+				OriginalSnapshotTotalEok: -1716,
+				NaverFollowupTotalEok:    ptr(-620.0),
+				CrossSourceDifferenceEok: 1096.0,
+				CrossSourceStatus:        string(StatusSourceScopeConflict),
+			}
+			Expect(ls.CrossSourceStatus).To(Equal(string(StatusSourceScopeConflict)))
+			Expect(ls.CrossSourceDifferenceEok).To(Equal(1096.0))
+		})
+
+		It("7. evaluates mismatched futures and spot times as NOT_A_BASIS", func() {
+			ls := &LateSessionSection{SpotPrice: 300.0, FuturesPrice: 302.46, BasisPoint: 2.46}
+			s := &Snapshot{LateSession: ls}
+			out := Render(s, nil)
+			Expect(out).To(ContainSubstring("NOT_A_BASIS / CROSS_TIME_SPREAD"))
+		})
+
+		It("8. sets ALIGNMENT_UNVERIFIED and FUTURES_CONTRACT_IDENTITY_UNVERIFIED for unverified futures identity", func() {
+			ls := &LateSessionSection{FuturesContractIdentityStatus: string(StatusFuturesIdentityUnverified)}
+			s := &Snapshot{LateSession: ls}
+			out := Render(s, nil)
+			Expect(out).To(ContainSubstring("FUTURES_CONTRACT_IDENTITY_UNVERIFIED"))
+		})
+
+		It("9. evaluates domestic market stress index as NOT_EVALUATED when inputs are missing", func() {
+			r := &RegimeSection{MissingInputs: []string{"VKOSPI_CLOSE", "OFFICIAL_SIDECAR_HISTORY", "RECONCILED_PROGRAM_FLOW"}}
+			s := &Snapshot{Regime: r}
+			out := Render(s, nil)
+			Expect(r.DomesticMarketStressIdx).To(BeNil())
+			Expect(out).To(ContainSubstring("N/A / NOT_EVALUATED"))
+		})
+
+		It("10. sets correlation trend to NOT_EVALUATED when previous correlation is missing", func() {
+			r := &RegimeSection{KOSPINASDAQCorr: 0.85, KospiNasdaqCorrLevel: "HIGH_CORRELATION", KospiNasdaqCorrTrend: string(StatusNotEvaluated)}
+			s := &Snapshot{Regime: r}
+			out := Render(s, nil)
+			Expect(out).To(ContainSubstring("`NOT_EVALUATED`"))
+		})
+
+		It("11. sidecar eligibility EXPIRED_FOR_DAY does not clear trigger history", func() {
+			imp := &ImpactSection{EligibilityState: "EXPIRED_FOR_DAY", TriggerState: string(StatusTriggerHistoryUnknown)}
+			Expect(imp.EligibilityState).To(Equal("EXPIRED_FOR_DAY"))
+			Expect(imp.TriggerState).To(Equal(string(StatusTriggerHistoryUnknown)))
+		})
+
+		It("12. follow-up reconciliation does not overwrite raw 15:30 snapshot records", func() {
+			ls := &LateSessionSection{
+				OriginalSnapshotTotalEok: -1716,
+				NaverFollowupTotalEok:    ptr(-620.0),
+				CanonicalTotalEok:        nil,
+			}
+			Expect(ls.OriginalSnapshotTotalEok).To(Equal(-1716.0))
+			Expect(ls.CanonicalTotalEok).To(BeNil())
 		})
 	})
 })

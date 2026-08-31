@@ -19,6 +19,7 @@ type Expectation struct {
 	StatusCode int
 	RespBody   []byte
 	Headers    http.Header
+	Err        error
 
 	RequestHeaders http.Header
 
@@ -89,6 +90,11 @@ func (e *Expectation) Post(path string) *Expectation {
 
 func (e *Expectation) Reply(statusCode int) *Expectation {
 	e.StatusCode = statusCode
+	return e
+}
+
+func (e *Expectation) ReplyError(err error) *Expectation {
+	e.Err = err
 	return e
 }
 
@@ -243,6 +249,9 @@ func (t *MockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for _, exp := range t.Expectations {
 		if !exp.isMatched && t.matches(exp, req) {
 			exp.isMatched = true
+			if exp.Err != nil {
+				return nil, exp.Err
+			}
 			return t.buildResponse(exp, req), nil
 		}
 	}

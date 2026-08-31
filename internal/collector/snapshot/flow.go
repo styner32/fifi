@@ -8,10 +8,19 @@ import (
 const tradeAmountMillionToEok = 100.0
 
 type FlowSection struct {
-	Date           string
-	ForeignEok     float64
-	InstitutionEok float64
-	IndividualEok  float64
+	Date                             string   `json:"date"`
+	ForeignEok                       float64  `json:"foreign_eok"`
+	InstitutionEok                   float64  `json:"institution_eok"`
+	IndividualEok                    float64  `json:"individual_eok"`
+	ResidualEok                      float64  `json:"residual_eok"`
+	DisplayedParticipantResidualEok float64  `json:"displayed_participant_residual_eok"`
+	MissingParticipants             bool     `json:"missing_participants"`
+	ReconciliationStatus             string   `json:"reconciliation_status"`
+	ForeignPrevEok                   *float64 `json:"foreign_prev_eok,omitempty"`
+	InstitutionPrevEok               *float64 `json:"institution_prev_eok,omitempty"`
+	IndividualPrevEok                *float64 `json:"individual_prev_eok,omitempty"`
+	PreviousFlowStatus               string   `json:"previous_flow_status,omitempty"`
+	PreviousFlowReason               string   `json:"previous_flow_reason,omitempty"`
 }
 
 // collectFlow converts KIS *_tr_pbmn investor net trade amounts from million
@@ -40,10 +49,28 @@ func collectFlow(ctx context.Context, stock DomesticStock, date string) (*FlowSe
 	if !ok {
 		return nil, fmt.Errorf("prsn_ntby_tr_pbmn missing")
 	}
+	fEok := foreign / tradeAmountMillionToEok
+	iEok := institution / tradeAmountMillionToEok
+	pEok := individual / tradeAmountMillionToEok
+	residual := fEok + iEok + pEok
+
+	status := "RECONCILED"
+	missingParticipants := false
+	if residual != 0 {
+		status = string(StatusPartiallyReconciled)
+		missingParticipants = true
+	}
+
 	return &FlowSection{
-		Date:           date,
-		ForeignEok:     foreign / tradeAmountMillionToEok,
-		InstitutionEok: institution / tradeAmountMillionToEok,
-		IndividualEok:  individual / tradeAmountMillionToEok,
+		Date:                             date,
+		ForeignEok:                       fEok,
+		InstitutionEok:                   iEok,
+		IndividualEok:                    pEok,
+		ResidualEok:                      residual,
+		DisplayedParticipantResidualEok: residual,
+		MissingParticipants:             missingParticipants,
+		ReconciliationStatus:             status,
+		PreviousFlowStatus:               string(StatusMissing),
+		PreviousFlowReason:               "PREVIOUS_DAY_FLOW_NOT_COLLECTED",
 	}, nil
 }

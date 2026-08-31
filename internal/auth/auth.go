@@ -10,8 +10,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 type KIClient struct {
@@ -22,6 +25,8 @@ type KIClient struct {
 	AuthToken      string
 	TokenCachePath string
 	Client         *http.Client
+	Retry          RetryPolicy
+	Limiter        *rate.Limiter
 	metricsMu      sync.Mutex
 	metrics        httpCallMetrics
 }
@@ -58,14 +63,23 @@ type CachedToken struct {
 }
 
 func NewKIClient(appKey string, appSecret string, baseURL string, userAgent string) *KIClient {
+	rps := 8
+	if v := os.Getenv("KIS_RATE_LIMIT_RPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rps = n
+		}
+	}
+
 	return &KIClient{
 		AppKey:    appKey,
 		AppSecret: appSecret,
 		BaseURL:   baseURL,
 		UserAgent: userAgent,
-		Client: &http.Client{ // update it later
+		Client: &http.Client{
 			Timeout: 15 * time.Second,
 		},
+		Retry:   DefaultRetryPolicy(),
+		Limiter: rate.NewLimiter(rate.Limit(rps), rps),
 	}
 }
 

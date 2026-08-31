@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -96,6 +98,7 @@ var _ = Describe("KIClient GET", func() {
 	It("returns raw body when JSON parsing fails", func() {
 		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
 		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{MaxAttempts: 1}
 
 		transport := testhelpers.NewMockTransport()
 		DeferCleanup(func() {
@@ -120,6 +123,7 @@ var _ = Describe("KIClient GET", func() {
 	It("returns an explicit empty-body parse error when the response body is empty", func() {
 		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
 		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{MaxAttempts: 1}
 
 		transport := testhelpers.NewMockTransport()
 		DeferCleanup(func() {
@@ -141,5 +145,175 @@ var _ = Describe("KIClient GET", func() {
 		Expect(resp.RequestMethod).To(Equal(http.MethodGet))
 		Expect(resp.RequestURL).To(Equal("https://example.test/uapi/empty"))
 		Expect(resp.RawBody).To(BeEmpty())
+	})
+
+	It("retries on HTTP 500 and succeeds on subsequent attempt", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{MaxAttempts: 3, BaseDelay: 10 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/retry-500").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusInternalServerError).
+			BodyString("Internal Server Error")
+
+		transport.New("https://example.test").
+			Get("/uapi/retry-500").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK).
+			JSON(map[string]any{
+				"rt_cd":  "0",
+				"msg_cd": "00000",
+				"msg1":   "success",
+				"output": map[string]any{"price": "100"},
+			})
+
+		client.Client = &http.Client{Transport: transport}
+
+		resp, err := client.Get(context.Background(), "/uapi/retry-500", "FTEST500", "", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.IsOK()).To(BeTrue())
+		Expect(transport.Requests()).To(HaveLen(2))
+	})
+
+	It("retries on transport network error and succeeds on subsequent attempt", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{MaxAttempts: 3, BaseDelay: 10 * time.Millisecond, MaxDelay: 50 * time.Millisecond}
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/retry-net").
+			MatchHeader("Authorization", "Bearer test-token").
+			ReplyError(fmt.Errorf("connection reset by peer"))
+
+		transport.New("https://example.test").
+			Get("/uapi/retry-net").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK).
+			JSON(map[string]any{
+				"rt_cd":  "0",
+				"msg_cd": "00000",
+				"msg1":   "success",
+			})
+
+		client.Client = &http.Client{Transport: transport}
+
+		resp, err := client.Get(context.Background(), "/uapi/retry-net", "FTESTNET", "", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.IsOK()).To(BeTrue())
+		Expect(transport.Requests()).To(HaveLen(2))
+	})
+
+	It("retries on EGW00201 rate limit message code with backoff", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{
+			MaxAttempts:       3,
+			BaseDelay:         10 * time.Millisecond,
+			MaxDelay:          50 * time.Millisecond,
+			RetryableMsgCodes: []string{"EGW00201"},
+		}
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/rate-limited").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK).
+			JSON(map[string]any{
+				"rt_cd":  "1",
+				"msg_cd": "EGW00201",
+				"msg1":   "초당 거래건수를 초과하였습니다.",
+			})
+
+		transport.New("https://example.test").
+			Get("/uapi/rate-limited").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK).
+			JSON(map[string]any{
+				"rt_cd":  "0",
+				"msg_cd": "00000",
+				"msg1":   "정상처리",
+			})
+
+		client.Client = &http.Client{Transport: transport}
+
+		resp, err := client.Get(context.Background(), "/uapi/rate-limited", "FTESTRATE", "", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp).NotTo(BeNil())
+		Expect(resp.IsOK()).To(BeTrue())
+		Expect(transport.Requests()).To(HaveLen(2))
+	})
+
+	It("does not retry non-retryable business errors and returns immediately", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{MaxAttempts: 3, BaseDelay: 10 * time.Millisecond}
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/business-err").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusOK).
+			JSON(map[string]any{
+				"rt_cd":  "1",
+				"msg_cd": "IGW00100",
+				"msg1":   "존재하지 않는 종목입니다.",
+			})
+
+		client.Client = &http.Client{Transport: transport}
+
+		resp, err := client.Get(context.Background(), "/uapi/business-err", "FTESTBUS", "", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("IGW00100"))
+		Expect(resp).NotTo(BeNil())
+		Expect(transport.Requests()).To(HaveLen(1))
+	})
+
+	It("aborts immediately when context is cancelled during backoff", func() {
+		client := NewKIClient("app-key", "app-secret", "https://example.test", "test-agent")
+		client.SetAuthToken("test-token")
+		client.Retry = RetryPolicy{MaxAttempts: 5, BaseDelay: 5 * time.Second, MaxDelay: 10 * time.Second}
+
+		transport := testhelpers.NewMockTransport()
+		DeferCleanup(func() {
+			Expect(transport.Verify()).To(Succeed())
+		})
+
+		transport.New("https://example.test").
+			Get("/uapi/cancel-test").
+			MatchHeader("Authorization", "Bearer test-token").
+			Reply(http.StatusInternalServerError).
+			BodyString("server down")
+
+		client.Client = &http.Client{Transport: transport}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		resp, err := client.Get(ctx, "/uapi/cancel-test", "FTESTCANCEL", "", nil)
+		Expect(err).To(MatchError(context.DeadlineExceeded))
+		Expect(resp).NotTo(BeNil())
+		Expect(transport.Requests()).To(HaveLen(1))
 	})
 })

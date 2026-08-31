@@ -21,7 +21,7 @@ func LoadConfig() (*Config, error) {
 	_ = godotenv.Load()
 
 	return &Config{
-		DatabaseURL:    getEnv("DATABASE_URL", "postgresql://sunjinlee@127.0.0.1:5432/dart?sslmode=disable"),
+		DatabaseURL:    getEnv("DATABASE_URL", "postgresql://sunjinlee@127.0.0.1:5433/dart?sslmode=disable"),
 		RedisURL:       getEnv("REDIS_URL", "redis://127.0.0.1:6379/0"),
 		DartAPIKey:     getEnv("DART_API_KEY", ""),
 		KosisAPIKey:    getEnv("KOSIS_API_KEY", ""),
