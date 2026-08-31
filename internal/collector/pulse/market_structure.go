@@ -183,7 +183,7 @@ func collectIndexFuture(ctx context.Context, future DomesticFuture, businessDate
 
 	return IndexFutureSnapshot{
 		Code: code, Name: name, Price: price, PrevClose: prevClose, ChangePct: changePct,
-		SpotPrice: spotPrice, SpotChangePct: spotChangePct, Basis: computedBasis,
+		SpotPrice: spotPrice, SpotChangePct: spotChangePct, Basis: computedBasis, RawSpread: computedBasis,
 		MarketBasis: marketBasis, BasisMatch: basisMatch, OK: true,
 		LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
 	}, nil
@@ -468,9 +468,14 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 			}
 
 			devStatus := SafetyDeviceStatus{
-				Market:    item.market,
-				Device:    device,
-				Threshold: item.threshold,
+				Market:           item.market,
+				Device:           device,
+				Threshold:        item.threshold,
+				FuturesChangePct: ptr(item.f.ChangePct),
+			}
+			if item.spotTh > 0 {
+				devStatus.SpotThreshold = ptr(item.spotTh)
+				devStatus.SpotChangePct = ptr(item.f.SpotChangePct)
 			}
 
 			hasTriggeredThis := false
@@ -551,7 +556,21 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 						if futuresGap < 0 {
 							futuresGap = 0
 						}
+						devStatus.FuturesGapPct = &futuresGap
 						devStatus.ThresholdDistancePct = &futuresGap
+
+						if item.spotTh > 0 {
+							var spotGap float64
+							if signMult > 0 {
+								spotGap = item.spotTh - item.f.SpotChangePct
+							} else {
+								spotGap = item.f.SpotChangePct + item.spotTh
+							}
+							if spotGap < 0 {
+								spotGap = 0
+							}
+							devStatus.SpotGapPct = &spotGap
+						}
 					}
 				}
 			}
@@ -581,9 +600,10 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 			{"CB3", 20.0, "CB2"},
 		} {
 			devStatus := SafetyDeviceStatus{
-				Market:    item.market,
-				Device:    step.device,
-				Threshold: step.threshold,
+				Market:         item.market,
+				Device:         step.device,
+				Threshold:      step.threshold,
+				IndexChangePct: ptr(item.idx.ChangePct),
 			}
 
 			hasTriggeredThis := cbTriggered[item.market][step.device]

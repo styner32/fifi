@@ -118,6 +118,15 @@ func buildWindow(symbol, label string, quote yahoo.Quote, series []yahoo.DailyCl
 	}
 	win.Current = current
 
+	win.PrevClose = quote.PreviousClose
+	if win.PrevClose == 0 && current != 0 && quote.ChangePercent != 0 {
+		win.PrevClose = current / (1 + quote.ChangePercent/100)
+	}
+	win.Source = fmt.Sprintf("Yahoo Finance %s", symbol)
+	if symbol == "KRW=X" {
+		win.Source = "Yahoo Finance 역외 스팟(KRW=X)"
+	}
+
 	// 앵커: 시리즈의 마지막 타임스탬프
 	if len(series) > 0 {
 		lastItem := series[len(series)-1]

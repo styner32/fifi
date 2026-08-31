@@ -278,4 +278,85 @@ var _ = Describe("flow rates", func() {
 		out := Render(p)
 		Expect(out).To(ContainSubstring("⚠️ 합계 불일치"))
 	})
+
+	It("시장폭, 단순스프레드(raw_spread), 환율 기준가, 사이드카 세부 등락률이 정상 렌더링", func() {
+		p := &Pulse{
+			Now:  time.Date(2026, 8, 31, 14, 40, 0, 0, kstLocation),
+			Date: "20260831",
+			KOSPI: Market{
+				Name: "KOSPI",
+				Index: IndexLevel{
+					Price:      6759.44,
+					PrevClose:  6788.0,
+					ChangePct:  -0.43,
+					Open:       6613.58,
+					High:       6808.07,
+					Low:        6547.76,
+					UpperLimit: 1,
+					Advancers:  312,
+					Unchanged:  50,
+					Decliners:  565,
+					LowerLimit: 0,
+					TotalCount: 928,
+					OK:         true,
+				},
+			},
+			KOSDAQ: Market{Name: "KOSDAQ"},
+			KOSPI200Future: IndexFutureSnapshot{
+				Code:          "A01609",
+				Price:         1062.70,
+				SpotPrice:     1061.34,
+				Basis:         1.36,
+				RawSpread:     1.36,
+				ChangePct:     -0.50,
+				SpotChangePct: -0.40,
+				OK:            true,
+			},
+			USDKRW: Window{
+				Symbol:    "KRW=X",
+				Label:     "원/달러(Yahoo 역외스팟)",
+				Current:   1372.58,
+				PrevClose: 1375.60,
+				ChangePct: -0.22,
+				OK:        true,
+			},
+			Safety: MarketSafety{
+				Devices: []SafetyDeviceStatus{
+					{
+						Market:               "KOSPI",
+						Device:               "SIDECAR_SELL",
+						Threshold:            5.0,
+						FuturesChangePct:     ptr(-0.50),
+						ThresholdDistancePct: ptr(4.50),
+						State:                "ELIGIBLE",
+						EligibilityReason:    "발동 가능 시간대",
+					},
+					{
+						Market:            "KOSDAQ",
+						Device:            "SIDECAR_SELL",
+						Threshold:         6.0,
+						SpotThreshold:     ptr(3.0),
+						FuturesChangePct:  ptr(-1.97),
+						SpotChangePct:     ptr(-1.16),
+						FuturesGapPct:     ptr(4.03),
+						SpotGapPct:        ptr(1.84),
+						State:             "ELIGIBLE",
+						EligibilityReason: "발동 가능 시간대",
+					},
+				},
+			},
+			Errors: map[string]string{},
+		}
+
+		out := Render(p)
+		// 1. 시장 폭 전체 종목 수 및 상승비율 검증
+		Expect(out).To(ContainSubstring("상승 312 (상한 1) · 보합 50 · 하락 565 · 총 928 (상승비율 33.7%)"))
+		// 2. 단순스프레드(raw_spread) 명칭 검증
+		Expect(out).To(ContainSubstring("단순스프레드(raw_spread) +1.36p (콘탱고)"))
+		// 3. 환율 기준가 검증
+		Expect(out).To(ContainSubstring("(기준 1375.60원)"))
+		// 4. 사이드카 선물/현물 세부 등락률 및 간격 검증
+		Expect(out).To(ContainSubstring("[KOSPI] SIDECAR_SELL (선물 -0.50% [임계 -5.0%]): 상태 ELIGIBLE (간격 4.50%p)"))
+		Expect(out).To(ContainSubstring("[KOSDAQ] SIDECAR_SELL (선물 -1.97% [임계 -6.0%] · 현물 -1.16% [임계 -3.0%]): 상태 ELIGIBLE (간격 선물 4.03%p / 현물 1.84%p)"))
+	})
 })

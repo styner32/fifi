@@ -83,11 +83,17 @@ func Render(p *Pulse) string {
 			indexChangePoints = p.KOSPI.Index.Price - p.KOSPI.Index.PrevClose
 		}
 		explainedRatio := 0.0
+		dirLabel := ""
 		if math.Abs(indexChangePoints) > 0.0001 {
 			explainedRatio = (top10ImpactSum / indexChangePoints) * 100
+			if explainedRatio < 0 {
+				dirLabel = " · 역방향 괴리"
+			} else {
+				dirLabel = " · 동방향"
+			}
 		}
-		b.WriteString(fmt.Sprintf("  └ 상위 10종목 합계: 비중 %.2f%% · 지수 영향합 %+.2fp / 전체 변동 %+.2fp (설명력 %.1f%%)\n",
-			top10WeightSum, top10ImpactSum, indexChangePoints, explainedRatio))
+		b.WriteString(fmt.Sprintf("  └ 상위 10종목 합계: 비중 %.2f%% · 지수 영향합 %+.2fp / 전체 변동 %+.2fp (기여율 %+.1f%%%s)\n",
+			top10WeightSum, top10ImpactSum, indexChangePoints, explainedRatio, dirLabel))
 	}
 	b.WriteString("\n")
 
@@ -98,7 +104,7 @@ func Render(p *Pulse) string {
 
 	// ── 7. 환율 ───────────────────────────────────────────────────────────────
 	b.WriteString("💱 환율\n")
-	renderWindowLine(&b, "  원/달러", p.USDKRW)
+	renderWindowLine(&b, "  원/달러 (Yahoo KRW=X)", p.USDKRW)
 	b.WriteString("\n")
 
 	// ── 8. 미국선물·매크로 ────────────────────────────────────────────────────
@@ -112,8 +118,8 @@ func Render(p *Pulse) string {
 	}
 	b.WriteString("\n")
 
-	// ── 9. 시장반영 분석 ──────────────────────────────────────────────────────
-	b.WriteString("🧭 시장반영\n")
+	// ── 9. 시장 상태 ──────────────────────────────────────────────────────────
+	b.WriteString("🧭 시장 상태\n")
 	if len(p.Analysis) == 0 {
 		b.WriteString("  데이터 수집 중\n")
 	}
@@ -165,7 +171,24 @@ func renderMarketIndex(b *strings.Builder, m Market) {
 	if idx.Open > 0 {
 		b.WriteString(fmt.Sprintf("          시 %.2f / 고 %.2f / 저 %.2f",
 			idx.Open, idx.High, idx.Low))
-		if idx.Advancers+idx.Decliners > 0 {
+		total := idx.TotalCount
+		if total == 0 {
+			total = idx.UpperLimit + idx.Advancers + idx.Unchanged + idx.Decliners + idx.LowerLimit
+		}
+		if total > 0 {
+			uplmStr := ""
+			if idx.UpperLimit > 0 {
+				uplmStr = fmt.Sprintf(" (상한 %d)", idx.UpperLimit)
+			}
+			lslmStr := ""
+			if idx.LowerLimit > 0 {
+				lslmStr = fmt.Sprintf(" (하한 %d)", idx.LowerLimit)
+			}
+			upTotal := idx.UpperLimit + idx.Advancers
+			upPct := float64(upTotal) / float64(total) * 100
+			b.WriteString(fmt.Sprintf("   상승 %d%s · 보합 %d · 하락 %d%s · 총 %d (상승비율 %.1f%%)",
+				idx.Advancers, uplmStr, idx.Unchanged, idx.Decliners, lslmStr, total, upPct))
+		} else if idx.Advancers+idx.Decliners > 0 {
 			b.WriteString(fmt.Sprintf("   상승 %d · 하락 %d", idx.Advancers, idx.Decliners))
 		}
 		b.WriteString("\n")
@@ -274,8 +297,35 @@ func renderMarketSafety(b *strings.Builder, safety MarketSafety) {
 	}
 	for _, d := range safety.Devices {
 		distStr := "N/A"
-		if d.ThresholdDistancePct != nil {
+		if d.FuturesGapPct != nil && d.SpotGapPct != nil {
+			distStr = fmt.Sprintf("선물 %.2f%%p / 현물 %.2f%%p", *d.FuturesGapPct, *d.SpotGapPct)
+		} else if d.ThresholdDistancePct != nil {
 			distStr = fmt.Sprintf("%.2f%%p", *d.ThresholdDistancePct)
+		}
+
+		rateInfo := ""
+		if d.FuturesChangePct != nil && d.SpotChangePct != nil && d.SpotThreshold != nil {
+			// KOSDAQ Sidecar
+			fSign := "+"
+			sSign := "+"
+			if d.Device == "SIDECAR_SELL" {
+				fSign = "-"
+				sSign = "-"
+			}
+			rateInfo = fmt.Sprintf("(선물 %+.2f%% [임계 %s%.1f%%] · 현물 %+.2f%% [임계 %s%.1f%%])",
+				*d.FuturesChangePct, fSign, d.Threshold, *d.SpotChangePct, sSign, *d.SpotThreshold)
+		} else if d.FuturesChangePct != nil {
+			// KOSPI Sidecar
+			fSign := "+"
+			if d.Device == "SIDECAR_SELL" {
+				fSign = "-"
+			}
+			rateInfo = fmt.Sprintf("(선물 %+.2f%% [임계 %s%.1f%%])", *d.FuturesChangePct, fSign, d.Threshold)
+		} else if d.IndexChangePct != nil {
+			// CB
+			rateInfo = fmt.Sprintf("(지수 %+.2f%% [임계 -%.1f%%])", *d.IndexChangePct, d.Threshold)
+		} else {
+			rateInfo = fmt.Sprintf("(임계 %.1f%%)", d.Threshold)
 		}
 
 		statusDetail := d.EligibilityReason
@@ -287,8 +337,8 @@ func renderMarketSafety(b *strings.Builder, safety MarketSafety) {
 			statusDetail = fmt.Sprintf("조건 관측 충족 (관측시각 %s · 공식 확인 대기)", d.ConditionObservedAt)
 		}
 
-		b.WriteString(fmt.Sprintf("  [%s] %s (임계 %.1f%%): 상태 %s (간격 %s) · %s\n",
-			d.Market, d.Device, d.Threshold, d.State, distStr, statusDetail))
+		b.WriteString(fmt.Sprintf("  [%s] %s %s: 상태 %s (간격 %s) · %s\n",
+			d.Market, d.Device, rateInfo, d.State, distStr, statusDetail))
 	}
 }
 
@@ -308,20 +358,20 @@ func renderDomesticDerivatives(b *strings.Builder, p *Pulse) {
 		if p.KOSPI200Future.Basis < 0 {
 			regime = "백워데이션"
 		}
-		b.WriteString(fmt.Sprintf("  KOSPI200 선물 %s  %.2f (%+.2f%%) · 현물 %.2f · 베이시스 %+.2fp (%s)\n",
+		b.WriteString(fmt.Sprintf("  KOSPI200 선물 %s  %.2f (%+.2f%%) · 현물 %.2f · 단순스프레드(raw_spread) %+.2fp (%s)\n",
 			p.KOSPI200Future.Code, p.KOSPI200Future.Price, p.KOSPI200Future.ChangePct,
 			p.KOSPI200Future.SpotPrice, p.KOSPI200Future.Basis, regime))
 		if p.BasisDeltaPrev != nil {
-			b.WriteString(fmt.Sprintf("           직전대비 베이시스 변동: %+.2fp\n", p.BasisDeltaPrev.Value))
+			b.WriteString(fmt.Sprintf("           직전대비 스프레드 변동: %+.2fp\n", p.BasisDeltaPrev.Value))
 		}
 		if p.BasisDeltaAnchor != nil {
-			b.WriteString(fmt.Sprintf("           당일시초대비 베이시스 변동: %+.2fp\n", p.BasisDeltaAnchor.Value))
+			b.WriteString(fmt.Sprintf("           당일시초대비 스프레드 변동: %+.2fp\n", p.BasisDeltaAnchor.Value))
 		}
 		if p.BasisDelta1h != nil {
-			b.WriteString(fmt.Sprintf("           최근1h 베이시스 변동: %+.2fp\n", p.BasisDelta1h.Value))
+			b.WriteString(fmt.Sprintf("           최근1h 스프레드 변동: %+.2fp\n", p.BasisDelta1h.Value))
 		}
 	} else {
-		b.WriteString("  KOSPI200 베이시스 데이터 없음\n")
+		b.WriteString("  KOSPI200 선물 데이터 없음\n")
 	}
 	if p.VKOSPI.OK {
 		b.WriteString(fmt.Sprintf("  VKOSPI %.2f  전일 %+.2f%% · %s\n", p.VKOSPI.Value, p.VKOSPI.ChangePct, p.VKOSPI.Source))
@@ -353,7 +403,7 @@ func renderFlowDetail(b *strings.Builder, flow FlowSnapshot) {
 
 func renderWindowLine(b *strings.Builder, label string, w Window) {
 	if !w.OK {
-		b.WriteString(fmt.Sprintf("%-20s  데이터 없음\n", label))
+		b.WriteString(fmt.Sprintf("%-22s  데이터 없음\n", label))
 		return
 	}
 
@@ -376,9 +426,19 @@ func renderWindowLine(b *strings.Builder, label string, w Window) {
 		reasonStr = fmt.Sprintf(" [%s]", w.Reason)
 	}
 
-	b.WriteString(fmt.Sprintf("%-20s  %10.4f  전일 %s%s%%   1h %s  2h %s%s%s\n",
+	refStr := ""
+	if w.PrevClose > 0 {
+		unit := ""
+		if w.Symbol == "KRW=X" || strings.Contains(label, "원/달러") {
+			unit = "원"
+		}
+		refStr = fmt.Sprintf(" (기준 %.2f%s)", w.PrevClose, unit)
+	}
+
+	b.WriteString(fmt.Sprintf("%-22s  %10.4f  전일 %s%s%%%s   1h %s  2h %s%s%s\n",
 		label, w.Current,
 		arrowNeutral(w.ChangePct), fmt.Sprintf("%.2f", w.ChangePct),
+		refStr,
 		move1h, move2h,
 		lastStr,
 		reasonStr,
