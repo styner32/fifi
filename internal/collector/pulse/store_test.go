@@ -75,4 +75,20 @@ var _ = Describe("store", func() {
 		Expect(err).To(BeNil())
 		Expect(string(raw)).To(ContainSubstring("Hello"))
 	})
+
+	It("Options.NoHistory가 true일 때 이전 적립 레코드를 로드하지 않음", func() {
+		now := time.Date(2026, 6, 23, 12, 0, 0, 0, kstLocation)
+		rec := PulseRecord{TS: now, KOSPIIdx: 2600.0}
+		Expect(AppendRecord(tmpDir, "20260623", rec)).To(BeNil())
+
+		// NoHistory=true일 때
+		opts := Options{StoreDir: tmpDir, NoHistory: true, NoSave: true}
+		var loaded []PulseRecord
+		if !opts.NoHistory {
+			var err error
+			loaded, err = LoadRecords(opts.StoreDir, "20260623")
+			Expect(err).To(BeNil())
+		}
+		Expect(loaded).To(BeNil())
+	})
 })

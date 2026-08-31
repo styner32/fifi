@@ -266,7 +266,23 @@ func buildKOSPIMasterLine(
 	baseDate string,
 	marketCap string,
 ) string {
+	return buildKOSPIMasterLineFull(code, name, "ST", "0", kospiFlag, netIncome, roe, baseDate, marketCap)
+}
+
+func buildKOSPIMasterLineFull(
+	code string,
+	name string,
+	group string,
+	prefFlag string,
+	kospiFlag string,
+	netIncome string,
+	roe string,
+	baseDate string,
+	marketCap string,
+) string {
 	fields := make([]string, len(kospiPart2FieldWidths))
+	fields[0] = group
+	fields[54] = prefFlag
 	fields[58] = kospiFlag
 	fields[62] = netIncome
 	fields[63] = roe

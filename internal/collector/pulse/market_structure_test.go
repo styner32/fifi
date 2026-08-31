@@ -207,4 +207,75 @@ var _ = Describe("flow rates", func() {
 		Expect(out).To(ContainSubstring("bp"))
 		Expect(out).To(ContainSubstring("저장 안 함 · 대상 경로 /tmp/custom-pulse/pulse_20260702.jsonl"))
 	})
+
+	It("수급 렌더에 기타법인 및 기관 7개 세부항목(금융투자, 보험, 투신, 기타금융, 은행, 연기금, 사모)과 합계가 정상 표시", func() {
+		p := &Pulse{
+			Now:  time.Date(2026, 8, 31, 12, 4, 0, 0, kstLocation),
+			Date: "20260831",
+			KOSPI: Market{
+				Name: "KOSPI",
+				Flow: FlowSnapshot{
+					Foreign:     -6219,
+					Institution: -6427,
+					Individual:  4682,
+					EtcCorp:     7964,
+					FinInvest:   -2683,
+					Insurance:   20,
+					InvTrust:    -347,
+					EtcFin:      81,
+					Bank:        43,
+					Pension:     147,
+					PrivEquity:  -3688,
+					OK:          true,
+				},
+			},
+			KOSDAQ: Market{
+				Name: "KOSDAQ",
+				Flow: FlowSnapshot{
+					Foreign:     -1349,
+					Institution: -1953,
+					Individual:  3327,
+					EtcCorp:     -25,
+					FinInvest:   -1000,
+					Insurance:   -53,
+					InvTrust:    -200,
+					EtcFin:      0,
+					Bank:        0,
+					Pension:     -200,
+					PrivEquity:  -500,
+					OK:          true,
+				},
+			},
+			Errors: map[string]string{},
+		}
+		out := Render(p)
+		// KOSPI 누적 라인에 기타법인 및 합계 0억 포함 검증
+		Expect(out).To(ContainSubstring("KOSPI    누적: 외국인 ▼-6219억 · 기관 ▼-6427억 · 개인 ▲+4682억 · 기타법인 ▲+7964억 (합계 0억)"))
+		// KOSPI 기관 세부 7개 항목 및 세부 합계 포함 검증
+		Expect(out).To(ContainSubstring("└ 기관 세부(누적): 금융투자 ▼-2683억 · 보험 ▲+20억 · 투신 ▼-347억 · 기타금융 ▲+81억 · 은행 ▲+43억 · 연기금 ▲+147억 · 사모 ▼-3688억 (합계 ▼-6427억)"))
+		// KOSDAQ 누적 라인에 기타법인 및 합계 0억 포함 검증
+		Expect(out).To(ContainSubstring("KOSDAQ   누적: 외국인 ▼-1349억 · 기관 ▼-1953억 · 개인 ▲+3327억 · 기타법인 ▼-25억 (합계 0억)"))
+	})
+
+	It("수급 합계 불일치 시 경고 표시 출력", func() {
+		p := &Pulse{
+			Now:  time.Date(2026, 8, 31, 12, 4, 0, 0, kstLocation),
+			Date: "20260831",
+			KOSPI: Market{
+				Name: "KOSPI",
+				Flow: FlowSnapshot{
+					Foreign:     -6219,
+					Institution: -6427,
+					Individual:  4682,
+					EtcCorp:     0, // 기타법인 누락 시 잔차 발생
+					FinInvest:   -2683,
+					OK:          true,
+				},
+			},
+			KOSDAQ: Market{Name: "KOSDAQ"},
+			Errors: map[string]string{},
+		}
+		out := Render(p)
+		Expect(out).To(ContainSubstring("⚠️ 합계 불일치"))
+	})
 })

@@ -156,7 +156,10 @@ func parseKOSPIMasterLine(line string) (kospiMasterRecord, bool, error) {
 		return kospiMasterRecord{}, false, fmt.Errorf("unexpected KOSPI master field count: %d", len(fields))
 	}
 
-	if strings.ToUpper(strings.TrimSpace(fields[58])) != "Y" {
+	isCommon := strings.ToUpper(strings.TrimSpace(fields[58])) == "Y"
+	pref := strings.TrimSpace(fields[54])
+	isPref := pref != "" && pref != "0" && strings.ToUpper(pref) != "N"
+	if !isCommon && !isPref {
 		return kospiMasterRecord{}, false, nil
 	}
 
@@ -165,15 +168,8 @@ func parseKOSPIMasterLine(line string) (kospiMasterRecord, bool, error) {
 		return kospiMasterRecord{}, false, nil
 	}
 
-	netIncome, ok := parseFloat(fields[62])
-	if !ok {
-		return kospiMasterRecord{}, false, nil
-	}
-
-	roe, ok := parseFloat(fields[63])
-	if !ok {
-		return kospiMasterRecord{}, false, nil
-	}
+	netIncome, _ := parseFloat(fields[62])
+	roe, _ := parseFloat(fields[63])
 
 	return kospiMasterRecord{
 		Code:      normalizeShortCode(code),

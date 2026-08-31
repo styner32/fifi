@@ -125,6 +125,8 @@ func runIntradayPulse(args []string) error {
 	fs.SetOutput(os.Stderr)
 	storeDir := fs.String("store-dir", envDefault("PULSE_OUTPUT_DIR", ".cache/pulse"), "펄스 적립 디렉터리")
 	noSave := fs.Bool("no-save", false, "적립/렌더 저장 생략 (읽기 전용)")
+	noHistory := fs.Bool("no-history", false, "이전 적립/누적 레코드 무시 (독립 실행 및 디버깅용)")
+	fs.BoolVar(noHistory, "no-prev", false, "이전 적립/누적 레코드 무시 (no-history와 동일)")
 	asJSON := fs.Bool("json", false, "JSON 출력")
 	safetyOnly := fs.Bool("safety-only", false, "서킷브레이커 및 사이드카 상태만 렌더링")
 	premarketFlag := fs.Bool("premarket", false, "개장전 취약도 보드 실행")
@@ -133,10 +135,11 @@ func runIntradayPulse(args []string) error {
 	}
 
 	opts := pulse.Options{
-		StoreDir: *storeDir,
-		Lookback: 2 * time.Hour,
-		NoSave:   *noSave,
-		JSON:     *asJSON,
+		StoreDir:  *storeDir,
+		Lookback:  2 * time.Hour,
+		NoSave:    *noSave,
+		NoHistory: *noHistory,
+		JSON:      *asJSON,
 	}
 
 	client, err := newKISClient()

@@ -53,10 +53,11 @@ type Deps struct {
 
 // Options는 runIntradayPulse에서 파싱된 실행 옵션.
 type Options struct {
-	StoreDir string
-	Lookback time.Duration // 기본 2h
-	NoSave   bool
-	JSON     bool
+	StoreDir  string
+	Lookback  time.Duration // 기본 2h
+	NoSave    bool
+	NoHistory bool // 이전 적립/누적 레코드 미사용 (독립 실행 및 디버깅용)
+	JSON      bool
 }
 
 // FlowSnapshot은 KIS inquire-investor-time-by-market 1행 파싱 결과 (단위: 억원).
@@ -121,6 +122,8 @@ type FlowDelta struct {
 	Foreign     float64
 	Institution float64
 	Individual  float64
+	EtcCorp     float64
+	EtcForeign  float64
 	IndexDelta  float64
 }
 
