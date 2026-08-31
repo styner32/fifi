@@ -54,9 +54,9 @@ var _ = Describe("Format Package Helpers", func() {
 
 	Context("EokArrow & AmountEok", func() {
 		It("formats eok with direction arrows and units", func() {
-			Expect(EokArrow(15000)).To(Equal("▲+1.50조"))
+			Expect(EokArrow(15000)).To(Equal("▲+15000억"))
 			Expect(EokArrow(150)).To(Equal("▲+150억"))
-			Expect(EokArrow(-15000)).To(Equal("▼-1.50조"))
+			Expect(EokArrow(-15000)).To(Equal("▼-15000억"))
 			Expect(EokArrow(-150)).To(Equal("▼-150억"))
 
 			Expect(AmountEok(15000)).To(Equal("1.50조"))

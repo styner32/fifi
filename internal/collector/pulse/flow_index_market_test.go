@@ -46,7 +46,9 @@ func flowResp(foreign, institution, individual float64) *auth.RESTResponse {
 			"pe_fund_ntby_tr_pbmn":  "0",
 			"insu_ntby_tr_pbmn":     "0",
 			"bank_ntby_tr_pbmn":     "0",
+			"mrbn_ntby_tr_pbmn":     "0",
 			"etc_corp_ntby_tr_pbmn": "0",
+			"etc_frgn_ntby_tr_pbmn": "0",
 		}},
 	}}
 }
@@ -118,6 +120,51 @@ var _ = Describe("collectFlow", func() {
 		Expect(err).To(BeNil())
 		Expect(snap.Foreign).To(BeNumerically("~", -18.0, 0.01))
 		Expect(snap.Institution).To(BeNumerically("~", 1142.0, 0.01))
+	})
+
+	It("전체 수급 주체 및 기관 7개 세부 항목 모두 파싱", func() {
+		stock := testStock{
+			flowResp: map[string]*auth.RESTResponse{
+				"KSP": {Body: map[string]any{
+					"output": []any{map[string]any{
+						"frgn_ntby_tr_pbmn":     "-621900",
+						"orgn_ntby_tr_pbmn":     "-642700",
+						"prsn_ntby_tr_pbmn":     "468200",
+						"scrt_ntby_tr_pbmn":     "-268300",
+						"insu_ntby_tr_pbmn":     "2000",
+						"ivtr_ntby_tr_pbmn":     "-34700",
+						"mrbn_ntby_tr_pbmn":     "8100",
+						"bank_ntby_tr_pbmn":     "4300",
+						"fund_ntby_tr_pbmn":     "14700",
+						"pe_fund_ntby_tr_pbmn":  "-368800",
+						"etc_corp_ntby_tr_pbmn": "796400",
+						"etc_frgn_ntby_tr_pbmn": "0",
+					}},
+				}},
+			},
+		}
+		snap, err := collectFlow(context.Background(), stock, "KSP", "0001", time.Now())
+		Expect(err).To(BeNil())
+		Expect(snap.OK).To(BeTrue())
+		Expect(snap.Foreign).To(Equal(-6219.0))
+		Expect(snap.Institution).To(Equal(-6427.0))
+		Expect(snap.Individual).To(Equal(4682.0))
+		Expect(snap.EtcCorp).To(Equal(7964.0))
+		Expect(snap.FinInvest).To(Equal(-2683.0))
+		Expect(snap.Insurance).To(Equal(20.0))
+		Expect(snap.InvTrust).To(Equal(-347.0))
+		Expect(snap.EtcFin).To(Equal(81.0))
+		Expect(snap.Bank).To(Equal(43.0))
+		Expect(snap.Pension).To(Equal(147.0))
+		Expect(snap.PrivEquity).To(Equal(-3688.0))
+
+		// 전체 주체 합계 = 0 검증
+		totalSum := snap.Individual + snap.Foreign + snap.Institution + snap.EtcCorp + snap.EtcForeign
+		Expect(totalSum).To(Equal(0.0))
+
+		// 기관 세부 합계 = 기관 총합 검증
+		instSum := snap.FinInvest + snap.Insurance + snap.InvTrust + snap.EtcFin + snap.Bank + snap.Pension + snap.PrivEquity
+		Expect(instSum).To(Equal(snap.Institution))
 	})
 })
 

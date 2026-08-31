@@ -92,13 +92,9 @@ func ArrowNeutral(v float64) string {
 	return "─"
 }
 
-// EokArrow formats v (in eok) into "▲+1.23조" or "N억".
+// EokArrow formats v (in eok) into "▲+N억" or "▼-N억".
 func EokArrow(v float64) string {
 	ar := Arrow(v)
-	abs := math.Abs(v)
-	if abs >= 10000 {
-		return fmt.Sprintf("%s%.2f조", ar, v/10000)
-	}
 	return fmt.Sprintf("%s%.0f억", ar, v)
 }
 
