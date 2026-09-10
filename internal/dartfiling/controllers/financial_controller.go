@@ -59,8 +59,13 @@ func (fc *FinancialController) GetCompanies(c *gin.Context) {
 	query := gorm.G[models.Company](fc.DB).Where("category <> ?", "E").Where("EXISTS (SELECT 1 FROM raw_reports WHERE raw_reports.corp_code = companies.corp_code)")
 
 	if search != "" {
+		// Escape special LIKE characters to prevent wildcard injection (DoS)
+		escapedSearch := strings.ReplaceAll(search, "\\", "\\\\")
+		escapedSearch = strings.ReplaceAll(escapedSearch, "%", "\\%")
+		escapedSearch = strings.ReplaceAll(escapedSearch, "_", "\\_")
+
 		// Use ILIKE for case-insensitive search, supported by pg_trgm indexes
-		searchTerm := "%" + search + "%"
+		searchTerm := "%" + escapedSearch + "%"
 		query = query.Where("corp_name ILIKE ? OR corp_eng_name ILIKE ?", searchTerm, searchTerm)
 	}
 
@@ -201,12 +206,17 @@ func (fc *FinancialController) GetReportsByCorpName(c *gin.Context) {
 
 	limit := getLimitWithDefault(c, 10)
 
+	// Escape special LIKE characters to prevent wildcard injection (DoS)
+	escapedCorpName := strings.ReplaceAll(corpName, "\\", "\\\\")
+	escapedCorpName = strings.ReplaceAll(escapedCorpName, "%", "\\%")
+	escapedCorpName = strings.ReplaceAll(escapedCorpName, "_", "\\_")
+
 	var analyses []models.Analysis
 	err := fc.DB.
 		Model(&models.Analysis{}).
 		Joins("JOIN raw_reports ON analyses.raw_report_id = raw_reports.id").
 		Joins("JOIN companies ON companies.corp_code = raw_reports.corp_code").
-		Where("companies.corp_name ILIKE ?", "%"+corpName+"%").
+		Where("companies.corp_name ILIKE ?", "%"+escapedCorpName+"%").
 		Order("raw_reports.receipt_number DESC").
 		Limit(limit).
 		Find(&analyses).Error
