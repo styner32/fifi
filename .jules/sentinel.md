@@ -1,0 +1,4 @@
+## 2023-10-27 - [GORM ILIKE Wildcard Injection]
+**Vulnerability:** User input passed directly to GORM ILIKE clauses without escaping wildcard characters (%, _).
+**Learning:** GORM parameterized queries (`?`) escape SQL injection, but do not escape database wildcard characters inside a LIKE/ILIKE match string. If a user supplies `%` or `_`, the database performs a much broader search. This allows attackers to perform a Denial of Service (DoS) by sending inputs composed of wildcard combinations, consuming heavy CPU/memory on the database server.
+**Prevention:** Always manually escape the characters `\`, `%`, and `_` in any user input before appending/prepending `%` to use it in a LIKE or ILIKE clause. Use a helper function like `escapeLike` (`strings.ReplaceAll(s, "\\", "\\\\")`, `%` to `\\%`, `_` to `\\_`).
