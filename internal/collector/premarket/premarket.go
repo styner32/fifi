@@ -61,9 +61,13 @@ func Collect(ctx context.Context, deps Deps, opts Options) *PremarketReport {
 	// Vulnerability Matrix
 	vul := calculateVulnerabilityMatrix(t1, t2, t3)
 
+	// Hard Data Table (14 items)
+	hardData := collectHardData(ctx, deps, date, now)
+
 	report := &PremarketReport{
 		Timestamp: now,
 		Date:      date,
+		HardData:  hardData,
 		Tier1:     t1,
 		Tier2:     t2,
 		Tier3:     t3,
