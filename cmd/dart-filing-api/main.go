@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
+	"time"
 
 	"github.com/fifi/internal/dartfiling/config"
 	"github.com/fifi/internal/dartfiling/routes"
@@ -31,7 +33,16 @@ func main() {
 
 	serverAddr := fmt.Sprintf(":%s", "8080")
 	log.Printf("Starting server on %s", serverAddr)
-	if err := router.Run(serverAddr); err != nil {
+
+	srv := &http.Server{
+		Addr:         serverAddr,
+		Handler:      router,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
