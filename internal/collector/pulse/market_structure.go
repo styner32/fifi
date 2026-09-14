@@ -183,7 +183,7 @@ func collectIndexFuture(ctx context.Context, future DomesticFuture, businessDate
 
 	return IndexFutureSnapshot{
 		Code: code, Name: name, Price: price, PrevClose: prevClose, ChangePct: changePct,
-		SpotPrice: spotPrice, SpotChangePct: spotChangePct, Basis: computedBasis,
+		SpotPrice: spotPrice, SpotChangePct: spotChangePct, Basis: computedBasis, RawSpread: computedBasis,
 		MarketBasis: marketBasis, BasisMatch: basisMatch, OK: true,
 		LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
 	}, nil
@@ -194,41 +194,29 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 	lastTS := CapTimeAt1530(now)
 	freshness, ageSecs, staleReason := DetermineFreshness("KRX", lastTS, now, false)
 
-	for _, code := range []string{"0503", "2050"} {
-		resp, err := stock.InquireVKOSPIPrice(ctx, code)
-		if err == nil {
-			if row := resp.FirstRow("output"); row != nil {
-				value, valueOK := parse.Num(row, "bstp_nmix_prpr")
-				change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
-				if valueOK && value >= 5 && value <= 100 {
-					return VolatilitySnapshot{
-						Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
-						LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
-					}, nil
+	if stock != nil {
+		code, resolveErr := stock.ResolveVKOSPICode(ctx, nil)
+		if resolveErr == nil {
+			resp, err := stock.InquireVKOSPIPrice(ctx, code)
+			if err == nil && resp != nil && resp.IsOK() {
+				if row := resp.FirstRow("output"); row != nil {
+					value, valueOK := parse.Num(row, "bstp_nmix_prpr")
+					change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
+					if valueOK && value >= 5 && value <= 100 {
+						return VolatilitySnapshot{
+							Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
+							LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
+						}, nil
+					}
 				}
+			} else if err != nil {
+				lastErr = err
 			}
 		} else {
-			lastErr = err
+			lastErr = resolveErr
 		}
 	}
-	code, resolveErr := stock.ResolveVKOSPICode(ctx, nil)
-	if resolveErr == nil && code != "0503" && code != "2050" {
-		resp, err := stock.InquireVKOSPIPrice(ctx, code)
-		if err == nil {
-			if row := resp.FirstRow("output"); row != nil {
-				value, valueOK := parse.Num(row, "bstp_nmix_prpr")
-				change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
-				if valueOK && value >= 5 && value <= 100 {
-					return VolatilitySnapshot{
-						Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
-						LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
-					}, nil
-				}
-			}
-		} else if err != nil {
-			lastErr = err
-		}
-	}
+
 	if naverClient != nil {
 		quote, err := naverClient.GetIndexQuote(ctx, "VKOSPI")
 		if err == nil && quote != nil && quote.Price >= 5 && quote.Price <= 100 {
@@ -238,13 +226,11 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 			}, nil
 		}
 	}
+
 	if lastErr != nil {
 		return VolatilitySnapshot{}, lastErr
 	}
-	if resolveErr != nil {
-		return VolatilitySnapshot{}, resolveErr
-	}
-	return VolatilitySnapshot{}, fmt.Errorf("VKOSPI KIS/Naver 조회 실패")
+	return VolatilitySnapshot{}, fmt.Errorf("VKOSPI collection unavailable")
 }
 
 func collectContributions(ctx context.Context, stock contributionStock, businessDate string, idx IndexLevel) ([]IndexContribution, error) {
@@ -482,9 +468,14 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 			}
 
 			devStatus := SafetyDeviceStatus{
-				Market:    item.market,
-				Device:    device,
-				Threshold: item.threshold,
+				Market:           item.market,
+				Device:           device,
+				Threshold:        item.threshold,
+				FuturesChangePct: ptr(item.f.ChangePct),
+			}
+			if item.spotTh > 0 {
+				devStatus.SpotThreshold = ptr(item.spotTh)
+				devStatus.SpotChangePct = ptr(item.f.SpotChangePct)
 			}
 
 			hasTriggeredThis := false
@@ -565,7 +556,21 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 						if futuresGap < 0 {
 							futuresGap = 0
 						}
+						devStatus.FuturesGapPct = &futuresGap
 						devStatus.ThresholdDistancePct = &futuresGap
+
+						if item.spotTh > 0 {
+							var spotGap float64
+							if signMult > 0 {
+								spotGap = item.spotTh - item.f.SpotChangePct
+							} else {
+								spotGap = item.f.SpotChangePct + item.spotTh
+							}
+							if spotGap < 0 {
+								spotGap = 0
+							}
+							devStatus.SpotGapPct = &spotGap
+						}
 					}
 				}
 			}
@@ -595,9 +600,10 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 			{"CB3", 20.0, "CB2"},
 		} {
 			devStatus := SafetyDeviceStatus{
-				Market:    item.market,
-				Device:    step.device,
-				Threshold: step.threshold,
+				Market:         item.market,
+				Device:         step.device,
+				Threshold:      step.threshold,
+				IndexChangePct: ptr(item.idx.ChangePct),
 			}
 
 			hasTriggeredThis := cbTriggered[item.market][step.device]

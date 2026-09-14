@@ -98,9 +98,13 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 	}
 
 	// ── 5. 레코드 로드 → 델타 계산 ─────────────────────────────────────────
-	records, loadErr := LoadRecords(storeDir, date)
-	if loadErr != nil {
-		pulse.Errors["store_load"] = loadErr.Error()
+	var records []PulseRecord
+	if !opts.NoHistory {
+		var loadErr error
+		records, loadErr = LoadRecords(storeDir, date)
+		if loadErr != nil {
+			pulse.Errors["store_load"] = loadErr.Error()
+		}
 	}
 	pulse.StoredCount = len(records)
 	var prevRec, anchorRec *PulseRecord
@@ -288,6 +292,8 @@ func computeFlowDeltas(records []PulseRecord, now time.Time, cur FlowSnapshot, c
 			Foreign:     cur.Foreign - prevFlow.Foreign,
 			Institution: cur.Institution - prevFlow.Institution,
 			Individual:  cur.Individual - prevFlow.Individual,
+			EtcCorp:     cur.EtcCorp - prevFlow.EtcCorp,
+			EtcForeign:  cur.EtcForeign - prevFlow.EtcForeign,
 			IndexDelta:  curIdx - prevIdx,
 		}
 		if h == 1 {
@@ -385,6 +391,8 @@ func computeSingleFlowDelta(prevRec *PulseRecord, cur FlowSnapshot, curIdx float
 		Foreign:     cur.Foreign - prevFlow.Foreign,
 		Institution: cur.Institution - prevFlow.Institution,
 		Individual:  cur.Individual - prevFlow.Individual,
+		EtcCorp:     cur.EtcCorp - prevFlow.EtcCorp,
+		EtcForeign:  cur.EtcForeign - prevFlow.EtcForeign,
 		IndexDelta:  curIdx - prevIdx,
 	}
 }

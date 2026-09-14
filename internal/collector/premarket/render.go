@@ -12,8 +12,19 @@ func Render(r *PremarketReport) string {
 	var b strings.Builder
 	nowKST := r.Timestamp.In(time.FixedZone("KST", 9*3600))
 
-	b.WriteString(fmt.Sprintf("🌅 개장 전 취약도 보드  %s\n", nowKST.Format(kstLayout)))
-	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	b.WriteString(fmt.Sprintf("🌅 개장 전 시장 브리핑  %s\n", nowKST.Format(kstLayout)))
+	b.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	// 0. 하드 데이터 표 (4개 열 고정 스키마)
+	if len(r.HardData) > 0 {
+		b.WriteString("📊 하드 데이터 표 (미장 종료 기준)\n\n")
+		b.WriteString("| 항목 | 값 | 등락/방향 | 기준 시점 |\n")
+		b.WriteString("| :--- | :--- | :--- | :--- |\n")
+		for _, row := range r.HardData {
+			b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", row.Item, row.Value, row.ChangeDir, row.RefTime))
+		}
+		b.WriteString("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	}
 
 	// 1. 방향축 D
 	dLabel := levelLabel(r.VUL.DScore)

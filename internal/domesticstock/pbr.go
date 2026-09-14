@@ -154,7 +154,6 @@ func (s *Service) KOSPIActualPBR(ctx context.Context, targetCoverage float64, bu
 	actualPBRProgressLog(progress, "cache loaded entries=%d path=%s took=%s", len(cache), cachePath, cacheLoadTime)
 	actualPBRLog(debug, "cache loaded entries=%d path=%s took=%s", len(cache), cachePath, cacheLoadTime)
 
-	pacer := newRequestPacer(getEnvInt(kospiActualPBRRPMEnvKey, defaultKOSPIActualPBRRPM))
 	targetMarketCap := totalMarketCap * targetCoverage
 
 	result := &ActualPBRResult{
@@ -175,7 +174,7 @@ func (s *Service) KOSPIActualPBR(ctx context.Context, targetCoverage float64, bu
 		result.SelectedCount++
 		result.RawSelectedCap += record.MarketCap
 
-		lookup, lookupErr := s.lookupActualPBR(ctx, record, businessDate, cache, cachePath, pacer, progress)
+		lookup, lookupErr := s.lookupActualPBR(ctx, record, businessDate, cache, cachePath, progress)
 		result.RateLimitWaitTime += lookup.WaitDuration
 		result.PriceFetchTime += lookup.FetchDuration
 		result.CacheSaveTime += lookup.CacheSaveTime
@@ -300,7 +299,6 @@ func (s *Service) lookupActualPBR(
 	businessDate string,
 	cache actualPBRCache,
 	cachePath string,
-	pacer *requestPacer,
 	progress bool,
 ) (actualPBRLookupResult, error) {
 	if entry, ok := cache[record.Code]; ok && entry.BusinessDate == businessDate && entry.PBR > 0 {
@@ -312,23 +310,16 @@ func (s *Service) lookupActualPBR(
 	}
 
 	actualPBRProgressLog(progress, "fetch start code=%s name=%s", record.Code, record.Name)
-	waitDuration, err := pacer.Wait(ctx)
-	if err != nil {
-		return actualPBRLookupResult{WaitDuration: waitDuration}, err
-	}
-
 	fetchStartedAt := time.Now()
 	resp, err := s.InquirePrice(ctx, record.Code)
 	fetchDuration := time.Since(fetchStartedAt)
 	if err != nil {
 		return actualPBRLookupResult{
-			WaitDuration:  waitDuration,
 			FetchDuration: fetchDuration,
 		}, err
 	}
 	if !resp.IsOK() {
 		return actualPBRLookupResult{
-			WaitDuration:  waitDuration,
 			FetchDuration: fetchDuration,
 		}, fmt.Errorf("inquire-price error for %s: msg_cd=%s msg1=%s", record.Code, resp.MessageCode(), resp.Message())
 	}
@@ -336,7 +327,6 @@ func (s *Service) lookupActualPBR(
 	row := firstOutputRow(resp, "output")
 	if row == nil {
 		return actualPBRLookupResult{
-			WaitDuration:  waitDuration,
 			FetchDuration: fetchDuration,
 		}, fmt.Errorf("inquire-price output missing for %s", record.Code)
 	}
@@ -344,7 +334,6 @@ func (s *Service) lookupActualPBR(
 	pbr, ok := parseFloat(row["pbr"])
 	if !ok || pbr <= 0 {
 		return actualPBRLookupResult{
-			WaitDuration:  waitDuration,
 			FetchDuration: fetchDuration,
 		}, fmt.Errorf("invalid pbr for %s", record.Code)
 	}
@@ -365,7 +354,6 @@ func (s *Service) lookupActualPBR(
 
 	if err := saveActualPBRCache(cachePath, cache); err != nil {
 		return actualPBRLookupResult{
-			WaitDuration:  waitDuration,
 			FetchDuration: fetchDuration,
 		}, err
 	}
@@ -375,7 +363,6 @@ func (s *Service) lookupActualPBR(
 		PBR:           pbr,
 		MarketCap:     effectiveMarketCap,
 		CacheHit:      false,
-		WaitDuration:  waitDuration,
 		FetchDuration: fetchDuration,
 		CacheSaveTime: cacheSaveTime,
 	}, nil

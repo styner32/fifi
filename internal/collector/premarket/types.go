@@ -16,8 +16,10 @@ type DomesticStock interface {
 	InquireIndexPrice(context.Context, string) (*auth.RESTResponse, error)
 	InquirePrice(context.Context, string) (*auth.RESTResponse, error)
 	InquireVKOSPIPrice(context.Context, string) (*auth.RESTResponse, error)
+	ResolveVKOSPICode(context.Context, []string) (string, error)
 	KOSPIMarketCapSummary(context.Context, string) (*domesticstock.KOSPIMarketCapSummary, error)
 	MarketFunds(context.Context, string) (*auth.RESTResponse, error)
+	InquireInvestorDailyByMarket(context.Context, string) (*auth.RESTResponse, error)
 }
 
 type DomesticFuture interface {
@@ -140,9 +142,17 @@ type VulnerabilityMatrix struct {
 	Suppressed     bool     `json:"suppressed"`
 }
 
+type HardDataRow struct {
+	Item      string `json:"item"`
+	Value     string `json:"value"`
+	ChangeDir string `json:"change_dir"`
+	RefTime   string `json:"ref_time"`
+}
+
 type PremarketReport struct {
 	Timestamp time.Time           `json:"timestamp"`
 	Date      string              `json:"date"`
+	HardData  []HardDataRow       `json:"hard_data"`
 	Tier1     Tier1Direction      `json:"tier1"`
 	Tier2     Tier2Amplification  `json:"tier2"`
 	Tier3     Tier3Character      `json:"tier3"`

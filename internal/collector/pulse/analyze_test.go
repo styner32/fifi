@@ -99,8 +99,7 @@ var _ = Describe("Analyze", func() {
 			Errors: map[string]string{},
 		}
 		bullets := Analyze(p)
-		last := bullets[len(bullets)-1]
-		Expect(last).To(ContainSubstring("위험회피"))
+		Expect(bullets[0]).To(ContainSubstring("RISK_OFF"))
 	})
 
 	It("데이터 없을 때 패닉 없이 실행", func() {

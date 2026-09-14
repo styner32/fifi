@@ -40,9 +40,11 @@ func Collect(ctx context.Context, deps Deps, opts Options) *PremarketReport {
 	// Fetch VKOSPI
 	var vkospiVal float64
 	if deps.Stock != nil {
-		if resp, err := deps.Stock.InquireVKOSPIPrice(ctx, "VKOSPI"); err == nil && resp != nil {
-			if r := firstRow(resp, "output"); r != nil {
-				vkospiVal, _ = num(r, "bstp_nmix_prpr")
+		if code, err := deps.Stock.ResolveVKOSPICode(ctx, nil); err == nil {
+			if resp, err := deps.Stock.InquireVKOSPIPrice(ctx, code); err == nil && resp != nil {
+				if r := firstRow(resp, "output"); r != nil {
+					vkospiVal, _ = num(r, "bstp_nmix_prpr")
+				}
 			}
 		}
 	}
@@ -59,9 +61,13 @@ func Collect(ctx context.Context, deps Deps, opts Options) *PremarketReport {
 	// Vulnerability Matrix
 	vul := calculateVulnerabilityMatrix(t1, t2, t3)
 
+	// Hard Data Table (14 items)
+	hardData := collectHardData(ctx, deps, date, now)
+
 	report := &PremarketReport{
 		Timestamp: now,
 		Date:      date,
+		HardData:  hardData,
 		Tier1:     t1,
 		Tier2:     t2,
 		Tier3:     t3,

@@ -6,16 +6,20 @@ import (
 )
 
 type PriceSection struct {
-	Date              string
-	Open              float64
-	High              float64
-	Low               float64
-	Close             float64
-	PreviousClose     float64
-	RangePoints       float64
-	RangePercent      float64
-	YearHigh          bool
-	TradingValueEok   float64 // 일간 총 거래대금 (억원), 0 = 미확인
+	Date                        string  `json:"date"`
+	Open                        float64 `json:"open"`
+	High                        float64 `json:"high"`
+	Low                         float64 `json:"low"`
+	Close                       float64 `json:"close"`
+	PreviousClose               float64 `json:"previous_close"`
+	RangePoints                 float64 `json:"range_points"`
+	RangePercent                float64 `json:"range_percent"`
+	IntradayRangePoints         float64 `json:"intraday_range_points"`
+	IntradayRangePctOfPrevClose float64 `json:"intraday_range_pct_of_prev_close"`
+	ClosePositionPct            float64 `json:"close_position_pct"`
+	PriceRegime                 string  `json:"price_regime"`
+	YearHigh                    bool    `json:"year_high"`
+	TradingValueEok             float64 `json:"trading_value_eok"` // 일간 총 거래대금 (억원), 0 = 미확인
 }
 
 // collectPrice computes intraday range as high-low and range percent as
@@ -97,12 +101,30 @@ func priceFromRow(row map[string]any, date string) (*PriceSection, bool) {
 	}
 	yearHigh, _ := num(row, "dryy_bstp_nmix_hgpr")
 	rangePoints := highValue - lowValue
+	rangePctOfPrevClose := rangePoints / prevClose * 100
+
+	closePosPct := 0.0
+	if rangePoints > 0 {
+		closePosPct = (closeValue - lowValue) / rangePoints * 100
+	}
+
+	priceRegime := "KOSPI_STRONG_UP"
+	if closeValue > prevClose {
+		if closePosPct < 80.0 {
+			priceRegime = "KOSPI_STRONG_UP_OFF_HIGH"
+		}
+	} else {
+		priceRegime = "KOSPI_WEAK"
+	}
+
 	// acml_tr_pbmn: 누적거래대금 (백만원), divide by 100 → 억원
 	tradingMillionKRW, _ := num(row, "acml_tr_pbmn")
 	return &PriceSection{
 		Date: date, Open: openValue, High: highValue, Low: lowValue,
 		Close: closeValue, PreviousClose: prevClose, RangePoints: rangePoints,
-		RangePercent: rangePoints / prevClose * 100, YearHigh: yearHigh > 0 && highValue >= yearHigh,
+		RangePercent: rangePctOfPrevClose, IntradayRangePoints: rangePoints,
+		IntradayRangePctOfPrevClose: rangePctOfPrevClose, ClosePositionPct: closePosPct,
+		PriceRegime: priceRegime, YearHigh: yearHigh > 0 && highValue >= yearHigh,
 		TradingValueEok: tradingMillionKRW / tradeAmountMillionToEok,
 	}, true
 }

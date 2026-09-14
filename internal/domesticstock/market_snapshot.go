@@ -167,31 +167,85 @@ func (s *Service) InquireDailyItemChartPrice(
 }
 
 func (s *Service) ResolveVKOSPICode(ctx context.Context, candidates []string) (string, error) {
-	envCode := strings.TrimSpace(os.Getenv(vkospiCodeEnvKey))
-	if envCode != "" {
-		return envCode, nil
+	s.vkospiMu.RLock()
+	cached := s.resolvedVKOSPICode
+	s.vkospiMu.RUnlock()
+	if cached != "" {
+		return cached, nil
 	}
 
-	candidates = normalizeCandidates(candidates)
-	for _, code := range candidates {
-		resp, reqErr := s.InquireIndexPrice(ctx, code)
+	var orderedCandidates []string
+	seen := make(map[string]struct{})
+	addCandidate := func(c string) {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			return
+		}
+		if _, exists := seen[c]; !exists {
+			seen[c] = struct{}{}
+			orderedCandidates = append(orderedCandidates, c)
+		}
+	}
+
+	if envCode := os.Getenv(vkospiCodeEnvKey); envCode != "" {
+		addCandidate(envCode)
+	}
+	for _, c := range candidates {
+		addCandidate(c)
+	}
+	for _, c := range defaultVKOSPICandidates {
+		addCandidate(c)
+	}
+
+	var probeErrors []string
+	for _, code := range orderedCandidates {
+		resp, reqErr := s.InquireVKOSPIPrice(ctx, code)
 		if reqErr != nil {
+			probeErrors = append(probeErrors, fmt.Sprintf("%s: request error: %v", code, reqErr))
 			continue
 		}
 		if !resp.IsOK() {
+			probeErrors = append(probeErrors, fmt.Sprintf("%s: api error msg_cd=%s msg1=%s", code, resp.MessageCode(), resp.Message()))
 			continue
 		}
-		if len(toRows(resp.Body["output"])) > 0 {
-			return code, nil
+		row := resp.FirstRow("output")
+		if row == nil {
+			probeErrors = append(probeErrors, fmt.Sprintf("%s: empty output row", code))
+			continue
 		}
+		val, ok := parseFloat(row["bstp_nmix_prpr"])
+		if !ok || val < 5 || val > 100 {
+			probeErrors = append(probeErrors, fmt.Sprintf("%s: value %.2f (ok=%v) out of range (5~100)", code, val, ok))
+			continue
+		}
+
+		s.vkospiMu.Lock()
+		s.resolvedVKOSPICode = code
+		s.vkospiMu.Unlock()
+		return code, nil
 	}
 
 	discoveredCode, err := discoverVKOSPICodeFromMaster(ctx, s.client)
 	if err == nil && discoveredCode != "" {
-		return discoveredCode, nil
+		if _, alreadyTested := seen[discoveredCode]; !alreadyTested {
+			resp, reqErr := s.InquireVKOSPIPrice(ctx, discoveredCode)
+			if reqErr == nil && resp.IsOK() {
+				if row := resp.FirstRow("output"); row != nil {
+					if val, ok := parseFloat(row["bstp_nmix_prpr"]); ok && val >= 5 && val <= 100 {
+						s.vkospiMu.Lock()
+						s.resolvedVKOSPICode = discoveredCode
+						s.vkospiMu.Unlock()
+						return discoveredCode, nil
+					}
+				}
+			}
+			probeErrors = append(probeErrors, fmt.Sprintf("master discovery %s failed validation", discoveredCode))
+		}
+	} else if err != nil {
+		probeErrors = append(probeErrors, fmt.Sprintf("master discovery error: %v", err))
 	}
 
-	return "", fmt.Errorf("unable to resolve VKOSPI code (set %s env var)", vkospiCodeEnvKey)
+	return "", fmt.Errorf("unable to resolve VKOSPI code (tested candidates: %s)", strings.Join(probeErrors, "; "))
 }
 
 func (s *Service) RSIFromDailyChart(

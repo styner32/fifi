@@ -155,9 +155,12 @@ var _ = Describe("market structure collectors", func() {
 	})
 
 	It("VKOSPI는 KIS 응답을 우선 사용", func() {
-		resp := &auth.RESTResponse{Body: map[string]any{"output": map[string]any{
-			"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
-		}}}
+		resp := &auth.RESTResponse{Body: map[string]any{
+			"rt_cd": "0",
+			"output": map[string]any{
+				"bstp_nmix_prpr": "28.50", "bstp_nmix_prdy_ctrt": "12.30",
+			},
+		}}
 		got, err := collectVKOSPI(context.Background(), vkospiFake{resp}, nil, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Source).To(Equal("KIS"))
@@ -203,5 +206,157 @@ var _ = Describe("flow rates", func() {
 		Expect(out).To(ContainSubstring("미국채10Y"))
 		Expect(out).To(ContainSubstring("bp"))
 		Expect(out).To(ContainSubstring("저장 안 함 · 대상 경로 /tmp/custom-pulse/pulse_20260702.jsonl"))
+	})
+
+	It("수급 렌더에 기타법인 및 기관 7개 세부항목(금융투자, 보험, 투신, 기타금융, 은행, 연기금, 사모)과 합계가 정상 표시", func() {
+		p := &Pulse{
+			Now:  time.Date(2026, 8, 31, 12, 4, 0, 0, kstLocation),
+			Date: "20260831",
+			KOSPI: Market{
+				Name: "KOSPI",
+				Flow: FlowSnapshot{
+					Foreign:     -6219,
+					Institution: -6427,
+					Individual:  4682,
+					EtcCorp:     7964,
+					FinInvest:   -2683,
+					Insurance:   20,
+					InvTrust:    -347,
+					EtcFin:      81,
+					Bank:        43,
+					Pension:     147,
+					PrivEquity:  -3688,
+					OK:          true,
+				},
+			},
+			KOSDAQ: Market{
+				Name: "KOSDAQ",
+				Flow: FlowSnapshot{
+					Foreign:     -1349,
+					Institution: -1953,
+					Individual:  3327,
+					EtcCorp:     -25,
+					FinInvest:   -1000,
+					Insurance:   -53,
+					InvTrust:    -200,
+					EtcFin:      0,
+					Bank:        0,
+					Pension:     -200,
+					PrivEquity:  -500,
+					OK:          true,
+				},
+			},
+			Errors: map[string]string{},
+		}
+		out := Render(p)
+		// KOSPI 누적 라인에 기타법인 및 합계 0억 포함 검증
+		Expect(out).To(ContainSubstring("KOSPI    누적: 외국인 ▼-6219억 · 기관 ▼-6427억 · 개인 ▲+4682억 · 기타법인 ▲+7964억 (합계 0억)"))
+		// KOSPI 기관 세부 7개 항목 및 세부 합계 포함 검증
+		Expect(out).To(ContainSubstring("└ 기관 세부(누적): 금융투자 ▼-2683억 · 보험 ▲+20억 · 투신 ▼-347억 · 기타금융 ▲+81억 · 은행 ▲+43억 · 연기금 ▲+147억 · 사모 ▼-3688억 (합계 ▼-6427억)"))
+		// KOSDAQ 누적 라인에 기타법인 및 합계 0억 포함 검증
+		Expect(out).To(ContainSubstring("KOSDAQ   누적: 외국인 ▼-1349억 · 기관 ▼-1953억 · 개인 ▲+3327억 · 기타법인 ▼-25억 (합계 0억)"))
+	})
+
+	It("수급 합계 불일치 시 경고 표시 출력", func() {
+		p := &Pulse{
+			Now:  time.Date(2026, 8, 31, 12, 4, 0, 0, kstLocation),
+			Date: "20260831",
+			KOSPI: Market{
+				Name: "KOSPI",
+				Flow: FlowSnapshot{
+					Foreign:     -6219,
+					Institution: -6427,
+					Individual:  4682,
+					EtcCorp:     0, // 기타법인 누락 시 잔차 발생
+					FinInvest:   -2683,
+					OK:          true,
+				},
+			},
+			KOSDAQ: Market{Name: "KOSDAQ"},
+			Errors: map[string]string{},
+		}
+		out := Render(p)
+		Expect(out).To(ContainSubstring("⚠️ 합계 불일치"))
+	})
+
+	It("시장폭, 단순스프레드(raw_spread), 환율 기준가, 사이드카 세부 등락률이 정상 렌더링", func() {
+		p := &Pulse{
+			Now:  time.Date(2026, 8, 31, 14, 40, 0, 0, kstLocation),
+			Date: "20260831",
+			KOSPI: Market{
+				Name: "KOSPI",
+				Index: IndexLevel{
+					Price:      6759.44,
+					PrevClose:  6788.0,
+					ChangePct:  -0.43,
+					Open:       6613.58,
+					High:       6808.07,
+					Low:        6547.76,
+					UpperLimit: 1,
+					Advancers:  312,
+					Unchanged:  50,
+					Decliners:  565,
+					LowerLimit: 0,
+					TotalCount: 928,
+					OK:         true,
+				},
+			},
+			KOSDAQ: Market{Name: "KOSDAQ"},
+			KOSPI200Future: IndexFutureSnapshot{
+				Code:          "A01609",
+				Price:         1062.70,
+				SpotPrice:     1061.34,
+				Basis:         1.36,
+				RawSpread:     1.36,
+				ChangePct:     -0.50,
+				SpotChangePct: -0.40,
+				OK:            true,
+			},
+			USDKRW: Window{
+				Symbol:    "KRW=X",
+				Label:     "원/달러(Yahoo 역외스팟)",
+				Current:   1372.58,
+				PrevClose: 1375.60,
+				ChangePct: -0.22,
+				OK:        true,
+			},
+			Safety: MarketSafety{
+				Devices: []SafetyDeviceStatus{
+					{
+						Market:               "KOSPI",
+						Device:               "SIDECAR_SELL",
+						Threshold:            5.0,
+						FuturesChangePct:     ptr(-0.50),
+						ThresholdDistancePct: ptr(4.50),
+						State:                "ELIGIBLE",
+						EligibilityReason:    "발동 가능 시간대",
+					},
+					{
+						Market:            "KOSDAQ",
+						Device:            "SIDECAR_SELL",
+						Threshold:         6.0,
+						SpotThreshold:     ptr(3.0),
+						FuturesChangePct:  ptr(-1.97),
+						SpotChangePct:     ptr(-1.16),
+						FuturesGapPct:     ptr(4.03),
+						SpotGapPct:        ptr(1.84),
+						State:             "ELIGIBLE",
+						EligibilityReason: "발동 가능 시간대",
+					},
+				},
+			},
+			Errors: map[string]string{},
+		}
+
+		out := Render(p)
+		// 1. 시장 폭 전체 종목 수 및 상승비율 검증
+		Expect(out).To(ContainSubstring("상승 312 (상한 1) · 보합 50 · 하락 565 · 총 928 (상승비율 33.7%)"))
+		// 2. 단순스프레드(raw_spread) 명칭 검증
+		Expect(out).To(ContainSubstring("단순스프레드(raw_spread) +1.36p (콘탱고)"))
+		// 3. 환율 기준가 검증
+		Expect(out).To(ContainSubstring("(기준 1375.60원)"))
+		// 4. 사이드카 선물/현물 세부 등락률 및 간격 검증
+		Expect(out).To(ContainSubstring("[KOSPI] SIDECAR_SELL (선물 -0.50% [임계 -5.0%]): 상태 ELIGIBLE (간격 4.50%p)"))
+		Expect(out).To(ContainSubstring("[KOSDAQ] SIDECAR_SELL (선물 -1.97% [임계 -6.0%] · 현물 -1.16% [임계 -3.0%]): 상태 ELIGIBLE (간격 선물 4.03%p / 현물 1.84%p)"))
 	})
 })

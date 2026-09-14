@@ -99,10 +99,17 @@ func (client *KIClient) doWithRetry(
 	payload any,
 	extraHeaders map[string]string,
 	allowRefresh bool,
-	rateLimitRetry int,
+	retryAttempt int,
 ) (*RESTResponse, error) {
 	if client.AuthToken == "" {
 		return nil, fmt.Errorf("auth token is empty; call GetAuthToken() and SetAuthToken() first")
+	}
+
+	// 1. Rate limiter wait
+	if client.Limiter != nil {
+		if err := client.Limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	endpoint := strings.TrimRight(client.BaseURL, "/") + apiPath
@@ -132,14 +139,44 @@ func (client *KIClient) doWithRetry(
 		req.Header.Set(key, value)
 	}
 
+	policy := client.Retry
+	if policy.MaxAttempts == 0 && policy.BaseDelay == 0 && policy.MaxDelay == 0 {
+		policy = DefaultRetryPolicy()
+	}
+	canRetry := (retryAttempt + 1) < policy.MaxAttempts
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if canRetry {
+			delay := policy.CalculateBackoff(retryAttempt)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+			return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, retryAttempt+1)
+		}
+		return nil, fmt.Errorf("request failed after %d retries: %w", retryAttempt, err)
 	}
 	defer resp.Body.Close()
 
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if canRetry {
+			delay := policy.CalculateBackoff(retryAttempt)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+			return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, retryAttempt+1)
+		}
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
@@ -151,14 +188,47 @@ func (client *KIClient) doWithRetry(
 		RequestURL:    req.URL.String(),
 	}
 
-	var parsed map[string]any
+	// 2. HTTP 5xx, 429 status retry
+	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		if canRetry {
+			delay := policy.CalculateBackoff(retryAttempt)
+			select {
+			case <-ctx.Done():
+				return response, ctx.Err()
+			case <-time.After(delay):
+			}
+			return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, retryAttempt+1)
+		}
+		return response, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(rawBody))
+	}
+
+	// 3. Empty response body retry
 	if len(bytes.TrimSpace(rawBody)) == 0 {
 		response.ParseError = "empty response body"
+		if canRetry {
+			delay := policy.CalculateBackoff(retryAttempt)
+			select {
+			case <-ctx.Done():
+				return response, ctx.Err()
+			case <-time.After(delay):
+			}
+			return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, retryAttempt+1)
+		}
 		return response, fmt.Errorf("empty response body")
 	}
 
+	var parsed map[string]any
 	if err := json.Unmarshal(rawBody, &parsed); err != nil {
 		response.ParseError = err.Error()
+		if canRetry {
+			delay := policy.CalculateBackoff(retryAttempt)
+			select {
+			case <-ctx.Done():
+				return response, ctx.Err()
+			case <-time.After(delay):
+			}
+			return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, retryAttempt+1)
+		}
 		return response, fmt.Errorf("failed to unmarshal response body: %w", err)
 	}
 
@@ -168,24 +238,27 @@ func (client *KIClient) doWithRetry(
 		return response, nil
 	}
 
+	// 4. Token expired (EGW00123) - 1 refresh without consuming retry attempts
 	if allowRefresh && response.MessageCode() == expiredTokenMessageCode {
 		if _, err := client.RefreshAuthToken(ctx); err != nil {
 			return response, fmt.Errorf("token expired and refresh failed: %w", err)
 		}
-		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, false, rateLimitRetry)
+		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, false, retryAttempt)
 	}
 
-	if response.MessageCode() == rateLimitMessageCode && rateLimitRetry < rateLimitMaxRetries {
+	// 5. Rate limit / retryable msg codes
+	if policy.IsRetryableMsgCode(response.MessageCode()) && canRetry {
+		delay := policy.CalculateBackoff(retryAttempt)
 		select {
 		case <-ctx.Done():
 			return response, ctx.Err()
-		case <-time.After(rateLimitRetryDelay):
+		case <-time.After(delay):
 		}
-		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, rateLimitRetry+1)
+		return client.doWithRetry(ctx, method, apiPath, trID, trCont, params, payload, extraHeaders, allowRefresh, retryAttempt+1)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(rawBody))
+		return response, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(rawBody))
 	}
 
 	return response, fmt.Errorf(

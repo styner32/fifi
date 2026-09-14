@@ -51,6 +51,13 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string, now t
 
 	tradingValue := get("acml_tr_pbmn") / millionToEok // 백만원 → 억원
 
+	upperLimit := getInt("uplm_issu_cnt")
+	advancers := getInt("ascn_issu_cnt")
+	unchanged := getInt("stnr_issu_cnt")
+	decliners := getInt("down_issu_cnt")
+	lowerLimit := getInt("lslm_issu_cnt")
+	totalCount := upperLimit + advancers + unchanged + decliners + lowerLimit
+
 	// Time / Freshness calculation
 	nowKST := now.In(kstLocation)
 	kst330 := time.Date(nowKST.Year(), nowKST.Month(), nowKST.Day(), 15, 30, 0, 0, kstLocation)
@@ -71,9 +78,12 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string, now t
 		High:         get("bstp_nmix_hgpr"),
 		Low:          get("bstp_nmix_lwpr"),
 		TradingValue: tradingValue,
-		Advancers:    getInt("ascn_issu_cnt"),
-		Decliners:    getInt("down_issu_cnt"),
-		Unchanged:    getInt("stnr_issu_cnt"),
+		UpperLimit:   upperLimit,
+		Advancers:    advancers,
+		Unchanged:    unchanged,
+		Decliners:    decliners,
+		LowerLimit:   lowerLimit,
+		TotalCount:   totalCount,
 		OK:           true,
 		LastTS:       lastTS,
 		FetchedAt:    now,

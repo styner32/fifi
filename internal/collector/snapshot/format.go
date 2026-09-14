@@ -48,3 +48,25 @@ func eokPlain(v float64) string { return format.EokPlain(v) }
 func trillionFromEok(v float64) string { return format.TrillionFromEok(v) }
 func trillionFromEokPlain(v float64) string { return format.TrillionFromEokPlain(v) }
 
+func formatEokSmart(v float64) string {
+	parts := strings.Split(fmt.Sprintf("%.3f", v), ".")
+	intPart := parts[0]
+	decPart := ""
+	if len(parts) > 1 {
+		decPart = strings.TrimRight(parts[1], "0")
+	}
+
+	var result strings.Builder
+	n := len(intPart)
+	for i, c := range intPart {
+		if i > 0 && (n-i)%3 == 0 && c != '-' {
+			result.WriteRune(',')
+		}
+		result.WriteRune(c)
+	}
+	if decPart != "" {
+		result.WriteString("." + decPart)
+	}
+	return result.String()
+}
+
