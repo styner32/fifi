@@ -3,12 +3,13 @@ package controllers
 import (
 	"encoding/base64"
 	"encoding/json"
-	"github.com/fifi/internal/dartfiling/models"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fifi/internal/dartfiling/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -49,6 +50,14 @@ type ReportSummaryResponse struct {
 
 const maxPageLimit = 100
 
+// escapeLike escapes characters used as wildcards in LIKE/ILIKE statements
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
+}
+
 // GetCompanies returns a list of all companies
 func (fc *FinancialController) GetCompanies(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -65,7 +74,8 @@ func (fc *FinancialController) GetCompanies(c *gin.Context) {
 		escapedSearch = strings.ReplaceAll(escapedSearch, "_", "\\_")
 
 		// Use ILIKE for case-insensitive search, supported by pg_trgm indexes
-		searchTerm := "%" + escapedSearch + "%"
+		// Escape user input to prevent wildcard injection
+		searchTerm := "%" + escapeLike(search) + "%"
 		query = query.Where("corp_name ILIKE ? OR corp_eng_name ILIKE ?", searchTerm, searchTerm)
 	}
 
@@ -216,7 +226,7 @@ func (fc *FinancialController) GetReportsByCorpName(c *gin.Context) {
 		Model(&models.Analysis{}).
 		Joins("JOIN raw_reports ON analyses.raw_report_id = raw_reports.id").
 		Joins("JOIN companies ON companies.corp_code = raw_reports.corp_code").
-		Where("companies.corp_name ILIKE ?", "%"+escapedCorpName+"%").
+		Where("companies.corp_name ILIKE ?", "%"+escapeLike(corpName)+"%").
 		Order("raw_reports.receipt_number DESC").
 		Limit(limit).
 		Find(&analyses).Error
