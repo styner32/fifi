@@ -2,137 +2,137 @@ package premarket
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
 
 type DailyRecord struct {
-	Date                 string             `json:"date"`
-	KOSPIPrice           float64            `json:"kospi_price"`
-	KOSDAQPrice          float64            `json:"kosdaq_price"`
-	CreditLoanBalanceEok float64            `json:"credit_loan_balance_eok"`
-	MarginReceivableEok  float64            `json:"margin_receivable_eok"`
-	ForcedSellAmountEok  float64            `json:"forced_sell_amount_eok"`
-	CustomerDepositEok   float64            `json:"customer_deposit_eok"`
-	VKOSPI               float64            `json:"vkospi"`
-	SKHYADRClose         float64            `json:"skhy_adr_close"`
-	USSemiComposite      float64            `json:"us_semi_composite"`
-	EchoEvents           []EchoEvent        `json:"echo_events,omitempty"`
-	Extra                map[string]float64 `json:"extra,omitempty"`
+	Date           string                 `json:"date"`
+	ObservedAt     time.Time              `json:"observed_at"`
+	Inputs         map[string]Observation `json:"inputs"`
+	DomesticInputs map[string]Observation `json:"domestic_inputs,omitempty"`
+	Calendar       *CalendarReport        `json:"calendar,omitempty"`
 }
-
 type StoreData struct {
-	Records []DailyRecord `json:"records"`
+	SchemaVersion int           `json:"schema_version"`
+	Records       []DailyRecord `json:"records"`
 }
-
 type Store struct {
 	mu       sync.RWMutex
 	filePath string
 	Data     StoreData
+	Err      error
 }
 
 func NewStore(dir string) *Store {
 	if dir == "" {
 		dir = ".cache/premarket"
 	}
-	_ = os.MkdirAll(dir, 0o755)
-	path := filepath.Join(dir, "store.json")
-	s := &Store{filePath: path, Data: StoreData{Records: []DailyRecord{}}}
-	s.load()
+	// Legacy store.json mixed missing zeroes, report dates and placeholder data.
+	// Leave that evidence intact; only v2 observations can enter new statistics.
+	s := &Store{filePath: filepath.Join(dir, "store.v2.json"), Data: StoreData{SchemaVersion: 2}}
+	raw, err := os.ReadFile(s.filePath)
+	if os.IsNotExist(err) {
+		return s
+	}
+	if err != nil {
+		s.Err = err
+		return s
+	}
+	if err = json.Unmarshal(raw, &s.Data); err != nil {
+		s.Err = err
+		return s
+	}
+	if s.Data.SchemaVersion != 2 {
+		s.Err = fmt.Errorf("unsupported premarket history schema")
+	}
 	return s
 }
-
-func (s *Store) load() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, err := os.Open(s.filePath)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_ = json.NewDecoder(f).Decode(&s.Data)
-}
-
 func (s *Store) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	sort.Slice(s.Data.Records, func(i, j int) bool {
-		return s.Data.Records[i].Date < s.Data.Records[j].Date
-	})
-
-	// Max 300 records
-	if len(s.Data.Records) > 300 {
-		s.Data.Records = s.Data.Records[len(s.Data.Records)-300:]
+	if s.Err != nil {
+		return s.Err
 	}
-
-	_ = os.MkdirAll(filepath.Dir(s.filePath), 0o755)
-	f, err := os.Create(s.filePath)
+	sort.Slice(s.Data.Records, func(i, j int) bool { return s.Data.Records[i].Date < s.Data.Records[j].Date })
+	if len(s.Data.Records) > 400 {
+		s.Data.Records = s.Data.Records[len(s.Data.Records)-400:]
+	}
+	raw, err := json.MarshalIndent(s.Data, "", "  ")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	return enc.Encode(&s.Data)
+	dir := filepath.Dir(s.filePath)
+	if err = os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".premarket-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(raw); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), s.filePath)
 }
-
 func (s *Store) UpsertRecord(rec DailyRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	found := false
 	for i, r := range s.Data.Records {
 		if r.Date == rec.Date {
-			// Merge fields
-			if rec.KOSPIPrice > 0 { s.Data.Records[i].KOSPIPrice = rec.KOSPIPrice }
-			if rec.KOSDAQPrice > 0 { s.Data.Records[i].KOSDAQPrice = rec.KOSDAQPrice }
-			if rec.CreditLoanBalanceEok > 0 { s.Data.Records[i].CreditLoanBalanceEok = rec.CreditLoanBalanceEok }
-			if rec.MarginReceivableEok > 0 { s.Data.Records[i].MarginReceivableEok = rec.MarginReceivableEok }
-			if rec.ForcedSellAmountEok > 0 { s.Data.Records[i].ForcedSellAmountEok = rec.ForcedSellAmountEok }
-			if rec.CustomerDepositEok > 0 { s.Data.Records[i].CustomerDepositEok = rec.CustomerDepositEok }
-			if rec.VKOSPI > 0 { s.Data.Records[i].VKOSPI = rec.VKOSPI }
-			if rec.SKHYADRClose > 0 { s.Data.Records[i].SKHYADRClose = rec.SKHYADRClose }
-			if rec.USSemiComposite != 0 { s.Data.Records[i].USSemiComposite = rec.USSemiComposite }
-			if len(rec.EchoEvents) > 0 { s.Data.Records[i].EchoEvents = rec.EchoEvents }
-			found = true
+			if !rec.ObservedAt.Before(r.ObservedAt) {
+				s.Data.Records[i] = rec
+			}
+			return
+		}
+	}
+	s.Data.Records = append(s.Data.Records, rec)
+}
+func (s *Store) History(key, beforeSource, beforeReport string, limit int) []float64 {
+	if s == nil || s.Err != nil || beforeSource == "" || limit <= 0 {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	type sample struct {
+		value    float64
+		observed time.Time
+	}
+	byDate := map[string]sample{}
+	for _, r := range s.Data.Records {
+		if r.Date >= beforeReport {
+			continue
+		}
+		o := r.Inputs[key]
+		if !o.available() || normalizeDate(o.BusinessDate) == "" || o.BusinessDate >= beforeSource {
+			continue
+		}
+		if key == "vkospi" && o.Session != "DAILY_CLOSE" {
+			continue
+		}
+		if previous, ok := byDate[o.BusinessDate]; !ok || r.ObservedAt.After(previous.observed) {
+			byDate[o.BusinessDate] = sample{*o.Value, r.ObservedAt}
+		}
+	}
+	dates := make([]string, 0, len(byDate))
+	for d := range byDate {
+		dates = append(dates, d)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+	out := []float64{}
+	for _, d := range dates {
+		out = append(out, byDate[d].value)
+		if len(out) == limit {
 			break
-		}
-	}
-	if !found {
-		s.Data.Records = append(s.Data.Records, rec)
-	}
-}
-
-func (s *Store) GetLatestVKOSPICcloses(limit int) []float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var out []float64
-	for i := len(s.Data.Records) - 1; i >= 0; i-- {
-		if s.Data.Records[i].VKOSPI > 0 {
-			out = append(out, s.Data.Records[i].VKOSPI)
-			if len(out) >= limit {
-				break
-			}
-		}
-	}
-	return out
-}
-
-func (s *Store) GetLatestCreditBalances(limit int) []float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var out []float64
-	for i := len(s.Data.Records) - 1; i >= 0; i-- {
-		if s.Data.Records[i].CreditLoanBalanceEok > 0 {
-			out = append(out, s.Data.Records[i].CreditLoanBalanceEok)
-			if len(out) >= limit {
-				break
-			}
 		}
 	}
 	return out

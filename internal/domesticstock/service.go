@@ -89,8 +89,8 @@ var (
 const defaultKOSPIActualPBRRPM = 18
 
 type Service struct {
-	client            *auth.KIClient
-	vkospiMu          sync.RWMutex
+	client             *auth.KIClient
+	vkospiMu           sync.RWMutex
 	resolvedVKOSPICode string
 }
 
@@ -179,12 +179,15 @@ type ActualPBRResult struct {
 }
 
 type kospiMasterRecord struct {
-	Code      string  `json:"code"`
-	Name      string  `json:"name"`
-	MarketCap float64 `json:"market_cap"`
-	NetIncome float64 `json:"net_income"`
-	ROE       float64 `json:"roe"`
-	BaseDate  string  `json:"base_date"`
+	KOSPIIndexMember bool    `json:"kospi_index_member"`
+	PreferredClass   string  `json:"preferred_class"`
+	SecurityGroup    string  `json:"security_group"`
+	Code             string  `json:"code"`
+	Name             string  `json:"name"`
+	MarketCap        float64 `json:"market_cap"`
+	NetIncome        float64 `json:"net_income"`
+	ROE              float64 `json:"roe"`
+	BaseDate         string  `json:"base_date"`
 }
 
 type kospiMasterJSONField struct {
@@ -194,12 +197,13 @@ type kospiMasterJSONField struct {
 }
 
 type kospiMasterJSONCache struct {
-	BusinessDate string                 `json:"business_date"`
-	GeneratedAt  string                 `json:"generated_at"`
-	SourcePath   string                 `json:"source_path"`
-	RecordCount  int                    `json:"record_count"`
-	Fields       []kospiMasterJSONField `json:"fields"`
-	Records      []kospiMasterRecord    `json:"records"`
+	SchemaVersion int                    `json:"schema_version"`
+	BusinessDate  string                 `json:"business_date"`
+	GeneratedAt   string                 `json:"generated_at"`
+	SourcePath    string                 `json:"source_path"`
+	RecordCount   int                    `json:"record_count"`
+	Fields        []kospiMasterJSONField `json:"fields"`
+	Records       []kospiMasterRecord    `json:"records"`
 }
 
 type actualPBRCacheEntry struct {

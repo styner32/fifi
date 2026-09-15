@@ -62,6 +62,13 @@ type Options struct {
 
 // FlowSnapshot은 KIS inquire-investor-time-by-market 1행 파싱 결과 (단위: 억원).
 type FlowSnapshot struct {
+	EtcForeignOK bool
+
+	Source    string
+	LastTS    time.Time
+	FetchedAt time.Time
+	AsOf      string // Provider time only; no inferred business date.
+
 	Foreign     float64
 	Institution float64
 	Individual  float64
@@ -79,6 +86,10 @@ type FlowSnapshot struct {
 
 // IndexLevel은 KIS inquire-index-price 파싱 결과.
 type IndexLevel struct {
+	MissingFields []string `json:"missing_fields,omitempty"`
+	Source        string
+	BreadthOK     bool
+
 	Price        float64
 	PrevClose    float64
 	ChangePct    float64
@@ -103,12 +114,16 @@ type IndexLevel struct {
 
 // Window는 Yahoo 분봉 기반 구간 변동 (1h / 2h).
 type Window struct {
+	ChangeOK bool
+	Ref1hTS  *time.Time
+	Ref2hTS  *time.Time
+
 	Symbol      string
 	Label       string
 	Current     float64
-	PrevClose   float64   `json:"prev_close,omitempty"`
-	Source      string    `json:"source,omitempty"`
-	ChangePct   float64   // 전일 종가 대비 (quote.ChangePercent)
+	PrevClose   float64 `json:"prev_close,omitempty"`
+	Source      string  `json:"source,omitempty"`
+	ChangePct   float64 // 전일 종가 대비 (quote.ChangePercent)
 	LastTS      time.Time
 	Move1hPct   *float64
 	Move2hPct   *float64
@@ -122,23 +137,26 @@ type Window struct {
 
 // FlowDelta는 1h 또는 2h 기준 수급 변화량 (억원).
 type FlowDelta struct {
-	RefTS       time.Time
-	Elapsed     float64 // 분
-	Foreign     float64
-	Institution float64
-	Individual  float64
-	EtcCorp     float64
-	EtcForeign  float64
-	IndexDelta  float64
+	EtcForeignOK bool
+	IndexDeltaOK bool
+	RefTS        time.Time
+	Elapsed      float64 // 분
+	Foreign      float64
+	Institution  float64
+	Individual   float64
+	EtcCorp      float64
+	EtcForeign   float64
+	IndexDelta   float64
 }
 
 // ProgramTradeSnapshot은 차익/비차익 프로그램 순매수 누적값입니다 (억원).
 type ProgramTradeSnapshot struct {
-	Arbitrage    float64 `json:"arbitrage"`
-	NonArbitrage float64 `json:"non_arbitrage"`
-	Total        float64 `json:"total"`
-	AsOf         string  `json:"as_of,omitempty"`
-	OK           bool    `json:"ok"`
+	LastTS       time.Time `json:"last_ts"`
+	Arbitrage    float64   `json:"arbitrage"`
+	NonArbitrage float64   `json:"non_arbitrage"`
+	Total        float64   `json:"total"`
+	AsOf         string    `json:"as_of,omitempty"`
+	OK           bool      `json:"ok"`
 }
 
 // ProgramTradeDelta는 저장된 누적 프로그램매매의 구간 변화량입니다 (억원).
@@ -152,6 +170,12 @@ type ProgramTradeDelta struct {
 
 // IndexFutureSnapshot은 근월 지수선물과 동일 응답의 기초지수 값입니다.
 type IndexFutureSnapshot struct {
+	SpotOK   bool   `json:"spot_ok"`
+	SpotCode string `json:"spot_code"`
+
+	MarketBasisOK bool   `json:"market_basis_ok"`
+	Alignment     string `json:"alignment"`
+
 	Code          string  `json:"code"`
 	Name          string  `json:"name"`
 	Price         float64 `json:"price"`
@@ -242,12 +266,19 @@ type MarketSafety struct {
 }
 
 type IndexContribution struct {
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	MarketCap   float64 `json:"market_cap"`
-	WeightPct   float64 `json:"weight_pct"`
-	ChangePct   float64 `json:"change_pct"`
-	PointImpact float64 `json:"point_impact"`
+	Status        string   `json:"status"`
+	WeightStatus  string   `json:"weight_status"`
+	Universe      string   `json:"universe"`
+	MasterDate    string   `json:"master_date"`
+	Denominator   float64  `json:"denominator_eok"`
+	UniverseCount int      `json:"universe_count"`
+	SourcePath    string   `json:"source_path"`
+	Code          string   `json:"code"`
+	Name          string   `json:"name"`
+	MarketCap     float64  `json:"market_cap"`
+	WeightPct     float64  `json:"weight_pct"`
+	ChangePct     float64  `json:"change_pct"`
+	PointImpact   *float64 `json:"point_impact"`
 }
 
 type VolatilitySnapshot struct {
@@ -289,45 +320,51 @@ type PulseAssessment struct {
 
 // Pulse는 전체 펄스 수집 결과.
 type Pulse struct {
-	Now                     time.Time
-	Date                    string // KST YYYYMMDD
-	BusinessDate            string
-	KOSPI                   Market
-	KOSDAQ                  Market
-	KOSPIProgram            ProgramTradeSnapshot
-	KOSDAQProgram           ProgramTradeSnapshot
-	KOSPIProgramDelta       *ProgramTradeDelta // Legacy field for compat
-	KOSPIProgramDeltaPrev   *ProgramTradeDelta
-	KOSPIProgramDeltaAnchor *ProgramTradeDelta
-	KOSPIProgramDelta1h     *ProgramTradeDelta
-	KOSPIProgramDelta2h     *ProgramTradeDelta
-	KOSDAQProgramDelta      *ProgramTradeDelta // Legacy field for compat
-	KOSDAQProgramDeltaPrev  *ProgramTradeDelta
+	Now                      time.Time
+	Date                     string // KST YYYYMMDD
+	BusinessDate             string
+	KOSPI                    Market
+	KOSDAQ                   Market
+	KOSPIProgram             ProgramTradeSnapshot
+	KOSDAQProgram            ProgramTradeSnapshot
+	KOSPIProgramDelta        *ProgramTradeDelta // Legacy field for compat
+	KOSPIProgramDeltaPrev    *ProgramTradeDelta
+	KOSPIProgramDeltaAnchor  *ProgramTradeDelta
+	KOSPIProgramDelta1h      *ProgramTradeDelta
+	KOSPIProgramDelta2h      *ProgramTradeDelta
+	KOSDAQProgramDelta       *ProgramTradeDelta // Legacy field for compat
+	KOSDAQProgramDeltaPrev   *ProgramTradeDelta
 	KOSDAQProgramDeltaAnchor *ProgramTradeDelta
-	KOSDAQProgramDelta1h    *ProgramTradeDelta
-	KOSDAQProgramDelta2h    *ProgramTradeDelta
-	KOSPI200Future          IndexFutureSnapshot
-	KOSDAQ150Future         IndexFutureSnapshot
-	BasisDelta1h            *BasisDelta // Legacy field for compat
-	BasisDelta2h            *BasisDelta // Legacy field for compat
-	BasisDeltaPrev          *BasisDelta
-	BasisDeltaAnchor        *BasisDelta
-	VKOSPI                  VolatilitySnapshot
-	Safety                  MarketSafety
-	Contributions           []IndexContribution
-	USDKRW                  Window
-	Macro                   []Window // NQ=F, ES=F, YM=F, ^N225, CL=F, ^TNX
-	StoredCount             int      // 당일 누적 레코드 수
-	PrevTS                  *time.Time
-	Analysis                []string
-	Errors                  map[string]string
-	StoreDir                string
-	Saved                   bool
-	Assessment              PulseAssessment
+	KOSDAQProgramDelta1h     *ProgramTradeDelta
+	KOSDAQProgramDelta2h     *ProgramTradeDelta
+	KOSPI200Future           IndexFutureSnapshot
+	KOSDAQ150Future          IndexFutureSnapshot
+	BasisDelta1h             *BasisDelta // Legacy field for compat
+	BasisDelta2h             *BasisDelta // Legacy field for compat
+	BasisDeltaPrev           *BasisDelta
+	BasisDeltaAnchor         *BasisDelta
+	VKOSPI                   VolatilitySnapshot
+	Safety                   MarketSafety
+	Contributions            []IndexContribution
+	USDKRW                   Window
+	Macro                    []Window // NQ=F, ES=F, YM=F, ^N225, CL=F, ^TNX
+	StoredCount              int      // 당일 누적 레코드 수
+	PrevTS                   *time.Time
+	Analysis                 []string
+	Errors                   map[string]string
+	StoreDir                 string
+	Saved                    bool
+	Assessment               PulseAssessment
 }
 
 // PulseRecord는 JSONL에 적립되는 한 줄 레코드.
 type PulseRecord struct {
+	SchemaVersion int        `json:"schema_version"`
+	KOSPIIndex    IndexLevel `json:"kospi_index"`
+	KOSDAQIndex   IndexLevel `json:"kosdaq_index"`
+	FX            Window     `json:"fx"`
+	Macro         []Window   `json:"macro"`
+
 	TS              time.Time            `json:"ts"`
 	BusinessDate    string               `json:"business_date,omitempty"`
 	KOSPIIdx        float64              `json:"kospi_idx"`
@@ -343,4 +380,3 @@ type PulseRecord struct {
 	Safety          MarketSafety         `json:"safety,omitempty"`
 	Assessment      PulseAssessment      `json:"assessment,omitempty"`
 }
-

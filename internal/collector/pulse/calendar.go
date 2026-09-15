@@ -18,6 +18,9 @@ func GetMarketPhase(venue string, t time.Time, isHoliday bool) string {
 
 // DetermineFreshness calculates the freshness category and metrics.
 func DetermineFreshness(venue string, lastTS, now time.Time, isHoliday bool) (string, float64, string) {
+	if !lastTS.IsZero() && lastTS.After(now) {
+		return "UNKNOWN", now.Sub(lastTS).Seconds(), "FUTURE_TIMESTAMP"
+	}
 	return calendar.DetermineFreshness(venue, lastTS, now, isHoliday)
 }
 

@@ -14,10 +14,12 @@ import (
 
 // CacheEntry is the JSON structure for daily-cached KOFIA data.
 type CacheEntry struct {
-	BusinessDate string           `json:"business_date"`
-	GeneratedAt  time.Time        `json:"generated_at"`
-	RecordCount  int              `json:"record_count"`
-	Rows         []MarketFundsRow `json:"rows"`
+	SchemaVersion int              `json:"schema_version"`
+	AmountUnit    string           `json:"amount_unit"`
+	BusinessDate  string           `json:"business_date"`
+	GeneratedAt   time.Time        `json:"generated_at"`
+	RecordCount   int              `json:"record_count"`
+	Rows          []MarketFundsRow `json:"rows"`
 }
 
 // CachedClient wraps Client with business-date-scoped caching.
@@ -40,13 +42,13 @@ func NewCachedClient(cacheDir, userAgent string) *CachedClient {
 // Otherwise it fetches from FreeSIS, caches, and returns.
 func (cc *CachedClient) GetMarketFundsForDate(ctx context.Context, date string) (*MarketFundsRow, error) {
 	date = strings.ReplaceAll(date, "-", "")
-	if len(date) != 8 {
+	if _, e := time.Parse("20060102", date); e != nil {
 		return nil, fmt.Errorf("kofia: invalid date format %q, expected YYYYMMDD", date)
 	}
 
 	// Try cache first
 	cachePath := cc.cachePath(date)
-	if entry, err := cc.loadCache(cachePath); err == nil {
+	if entry, err := cc.loadCache(cachePath); err == nil && entry.BusinessDate == date {
 		row := cc.findRow(entry.Rows, date)
 		if row != nil {
 			return row, nil
@@ -66,10 +68,6 @@ func (cc *CachedClient) GetMarketFundsForDate(ctx context.Context, date string) 
 	}
 
 	row := cc.findRow(rows, date)
-	if row == nil && len(rows) > 0 {
-		// Return most recent row if exact date not found (holidays etc.)
-		return &rows[0], nil
-	}
 	if row == nil {
 		return nil, fmt.Errorf("kofia: no data found for date %s", date)
 	}
@@ -89,11 +87,28 @@ func (cc *CachedClient) loadCache(path string) (*CacheEntry, error) {
 	if err := json.Unmarshal(data, &entry); err != nil {
 		return nil, err
 	}
+	if entry.SchemaVersion != 2 || entry.AmountUnit != marketFundsAmountUnit {
+		return nil, fmt.Errorf("kofia: legacy unit cache requires refresh")
+	}
+	for _, row := range entry.Rows {
+		if row.AmountUnit != marketFundsAmountUnit {
+			return nil, fmt.Errorf("kofia: cache row unit missing")
+		}
+	}
 	return &entry, nil
 }
 
 func (cc *CachedClient) saveCache(path, date string, rows []MarketFundsRow) error {
-	entry := CacheEntry{
+	// Preserve unversioned caches before replacing their ambiguous units.
+	if raw, e := os.ReadFile(path); e == nil {
+		var old CacheEntry
+		if json.Unmarshal(raw, &old) == nil && old.SchemaVersion != 2 {
+			if e = os.WriteFile(fmt.Sprintf("%s.legacy.%d", path, time.Now().UnixNano()), raw, 0600); e != nil {
+				return e
+			}
+		}
+	}
+	entry := CacheEntry{SchemaVersion: 2, AmountUnit: marketFundsAmountUnit,
 		BusinessDate: date,
 		GeneratedAt:  time.Now(),
 		RecordCount:  len(rows),
@@ -105,11 +120,16 @@ func (cc *CachedClient) saveCache(path, date string, rows []MarketFundsRow) erro
 // findRow finds a row whose date matches the given YYYYMMDD date.
 // KOFIA API dates are already in YYYYMMDD format.
 func (cc *CachedClient) findRow(rows []MarketFundsRow, date string) *MarketFundsRow {
+	best := -1
 	for i, r := range rows {
-		if r.Date == date {
-			return &rows[i]
+		if _, e := time.Parse("20060102", r.Date); e == nil && r.Date <= date && (best < 0 || r.Date > rows[best].Date) {
+			best = i
 		}
 	}
+	if best >= 0 {
+		return &rows[best]
+	}
+
 	return nil
 }
 

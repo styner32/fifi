@@ -144,9 +144,14 @@ go run ./cmd/agent report safety-devices
 
 ## Verification & Testing
 
-모든 CLI 모듈은 Go 유닛 테스트 수트에 포함되어 있습니다:
+CLI의 신규·수정 테스트는 Ginkgo v2 + Gomega로 작성합니다. 조건은 `Context`, 기대 동작은 `It`, 반복 사례는 `DescribeTable`로 구분합니다. [테스트 가이드](TESTING.md)의 작성 규칙을 따릅니다.
+
+저장소 루트에서 실행합니다. `go test`는 기존 Ginkgo 스위트를 실행하므로 별도 Ginkgo CLI 설치가 필요하지 않습니다.
 
 ```bash
-cd go
+# CLI 및 스냅샷 관련 스위트
+go test -race ./cmd/agent ./internal/collector/snapshot ./internal/external/kofia
+
+# 전체 테스트
 go test ./...
 ```

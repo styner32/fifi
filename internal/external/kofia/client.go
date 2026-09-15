@@ -9,7 +9,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/fifi/internal/parse"
 	"io"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
@@ -26,14 +28,14 @@ const (
 	// 증시자금추이 서비스 ID
 	MarketFundsObjNM = "STATSCU0100000060BO"
 
-	// API 원시값은 천원(KRW) 단위. 억원으로 변환하려면 ÷1억 (100,000,000).
-	// 백만원으로 변환하려면 ÷1,000.
-	wonToMillionKRW = 1_000.0
+	// Request amounts in million KRW explicitly; do not infer units from magnitude.
+	marketFundsAmountUnit = "KRW_MILLION"
 )
 
 // MarketFundsRow represents a single daily row from 증시자금추이.
 // All amounts are converted to 백만원 (million KRW) for consistency with KOFIA XLS display.
 type MarketFundsRow struct {
+	AmountUnit            string  `json:"amount_unit"`
 	Date                  string  `json:"date"`                    // YYYYMMDD
 	CustomerDepositMln    float64 `json:"customer_deposit_mln"`    // 투자자예탁금 (파생제외)
 	DerivativesDepositMln float64 `json:"derivatives_deposit_mln"` // 장내파생 거래 예수금
@@ -71,7 +73,7 @@ func (c *Client) GetMarketFunds(ctx context.Context, startDate, endDate string) 
 	// No explicit session needed — the cookie jar handles it.
 	payload := map[string]any{
 		"dmSearch": map[string]any{
-			"tmpV40": "100",
+			"tmpV40": "1000000", // 원 -> 백만원 display divisor
 			"tmpV41": "1",
 			"tmpV1":  "D",
 			"tmpV45": startDate,
@@ -114,22 +116,8 @@ func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 }
 
-// FreeSIS API response structure:
-//
-//	{
-//	  "unit": "",
-//	  "ds1": [
-//	    {
-//	      "TMPV1": "20260604",           // date
-//	      "TMPV2": 13969476166975,        // 투자자예탁금 (천원)
-//	      "TMPV3": 5351851970083,         // 파생 예수금 (천원)
-//	      "TMPV4": 11519123968170,        // RP 매도잔고 (천원)
-//	      "TMPV5": 182925928283,          // 위탁매매 미수금 (천원)
-//	      "TMPV6": 2431103358,            // 반대매매금액 (천원)
-//	      "TMPV7": 1.8                    // 반대매매비중(%)
-//	    }
-//	  ]
-//	}
+// TMPV2..6 are amounts in the requested display unit; TMPV7 is a percentage.
+// Empty unit metadata is valid only for our explicit tmpV40=1000000 request.
 func decodeMarketFunds(raw []byte) ([]MarketFundsRow, error) {
 	var envelope struct {
 		Unit string           `json:"unit"`
@@ -142,19 +130,36 @@ func decodeMarketFunds(raw []byte) ([]MarketFundsRow, error) {
 		return nil, fmt.Errorf("kofia: empty ds1 result")
 	}
 
+	divisor := 1.0 // empty unit follows the explicitly requested million-KRW display unit
+	switch strings.TrimSpace(envelope.Unit) {
+	case "", "백만원", "백만 원":
+	case "천원":
+		divisor = 1000
+	case "원":
+		divisor = 1000000
+	default:
+		return nil, fmt.Errorf("kofia: unrecognized amount unit %q", envelope.Unit)
+	}
 	var rows []MarketFundsRow
+
 	for _, item := range envelope.DS1 {
 		date := str(item, "TMPV1")
-		if date == "" {
+		if _, e := time.Parse("20060102", date); e != nil {
 			continue
 		}
+		for _, key := range []string{"TMPV2", "TMPV3", "TMPV4", "TMPV5", "TMPV6", "TMPV7"} {
+			v, ok := parse.Float(item[key])
+			if !ok || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				return nil, fmt.Errorf("kofia: invalid or missing %s", key)
+			}
+		}
 		rows = append(rows, MarketFundsRow{
-			Date:                  date,
-			CustomerDepositMln:    numVal(item, "TMPV2") / wonToMillionKRW,
-			DerivativesDepositMln: numVal(item, "TMPV3") / wonToMillionKRW,
-			RPBalanceMln:          numVal(item, "TMPV4") / wonToMillionKRW,
-			MarginReceivableMln:   numVal(item, "TMPV5") / wonToMillionKRW,
-			ForcedSellAmountMln:   numVal(item, "TMPV6") / wonToMillionKRW,
+			AmountUnit: marketFundsAmountUnit, Date: date,
+			CustomerDepositMln:    numVal(item, "TMPV2") / divisor,
+			DerivativesDepositMln: numVal(item, "TMPV3") / divisor,
+			RPBalanceMln:          numVal(item, "TMPV4") / divisor,
+			MarginReceivableMln:   numVal(item, "TMPV5") / divisor,
+			ForcedSellAmountMln:   numVal(item, "TMPV6") / divisor,
 			ForcedSellRatioPct:    numVal(item, "TMPV7"),
 		})
 	}
@@ -169,16 +174,7 @@ func str(m map[string]any, key string) string {
 	return strings.TrimSpace(v)
 }
 
-func numVal(m map[string]any, key string) float64 {
-	switch v := m[key].(type) {
-	case float64:
-		return v
-	case json.Number:
-		f, _ := v.Float64()
-		return f
-	}
-	return 0
-}
+func numVal(m map[string]any, key string) float64 { v, _ := parse.Float(m[key]); return v }
 
 func min(a, b int) int {
 	if a < b {

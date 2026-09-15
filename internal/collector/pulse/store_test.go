@@ -51,7 +51,7 @@ var _ = Describe("store", func() {
 			{TS: base.Add(60 * time.Minute), KOSPIIdx: 102},
 			{TS: base.Add(90 * time.Minute), KOSPIIdx: 103},
 		}
-		now := base.Add(75 * time.Minute)
+		now := base.Add(65 * time.Minute)
 		target := now.Add(-1 * time.Hour) // = base - 15min → at-or-before는 base 점
 
 		found := LoadNearest(records, target)

@@ -35,7 +35,7 @@ func (f testStock) InquireIndexPrice(_ context.Context, indexCode string) (*auth
 }
 
 func flowResp(foreign, institution, individual float64) *auth.RESTResponse {
-	return &auth.RESTResponse{Body: map[string]any{
+	return &auth.RESTResponse{Body: map[string]any{"rt_cd": "0",
 		"output": []any{map[string]any{
 			"frgn_ntby_tr_pbmn":     fts(foreign),
 			"orgn_ntby_tr_pbmn":     fts(institution),
@@ -58,7 +58,7 @@ func idxResp(price, prdyVrss, open, high, low, acml float64, up, dn int) *auth.R
 	if price-prdyVrss != 0 {
 		ctrt = prdyVrss / (price - prdyVrss) * 100
 	}
-	return &auth.RESTResponse{Body: map[string]any{
+	return &auth.RESTResponse{Body: map[string]any{"rt_cd": "0",
 		"output": []any{map[string]any{
 			"bstp_nmix_prpr":      fts(price),
 			"bstp_nmix_prdy_vrss": fts(prdyVrss),
@@ -103,7 +103,7 @@ var _ = Describe("collectFlow", func() {
 	It("output 행 없으면 에러", func() {
 		stock := testStock{
 			flowResp: map[string]*auth.RESTResponse{
-				"KSP": {Body: map[string]any{}},
+				"KSP": {Body: map[string]any{"rt_cd": "0"}},
 			},
 		}
 		_, err := collectFlow(context.Background(), stock, "KSP", "0001", time.Now())
@@ -125,7 +125,7 @@ var _ = Describe("collectFlow", func() {
 	It("전체 수급 주체 및 기관 7개 세부 항목 모두 파싱", func() {
 		stock := testStock{
 			flowResp: map[string]*auth.RESTResponse{
-				"KSP": {Body: map[string]any{
+				"KSP": {Body: map[string]any{"rt_cd": "0",
 					"output": []any{map[string]any{
 						"frgn_ntby_tr_pbmn":     "-621900",
 						"orgn_ntby_tr_pbmn":     "-642700",
@@ -194,7 +194,7 @@ var _ = Describe("collectIndex", func() {
 	It("output 행 없으면 에러", func() {
 		stock := testStock{
 			indexResp: map[string]*auth.RESTResponse{
-				"0001": {Body: map[string]any{}},
+				"0001": {Body: map[string]any{"rt_cd": "0"}},
 			},
 		}
 		_, err := collectIndex(context.Background(), stock, "0001", time.Now())
@@ -209,24 +209,12 @@ var _ = Describe("collectIndex", func() {
 var _ = Describe("buildWindow", func() {
 	nowBase := time.Date(2026, 6, 23, 13, 38, 0, 0, time.UTC)
 
-	It("at-or-before 정확히 선택 — 1h/2h 구간 변동", func() {
-		series := []yahoo.DailyClose{
-			{DateUnix: nowBase.Add(-3 * time.Hour).Unix(), Close: 100},
-			{DateUnix: nowBase.Add(-2 * time.Hour).Unix(), Close: 102},
-			{DateUnix: nowBase.Add(-61 * time.Minute).Unix(), Close: 104},
-			{DateUnix: nowBase.Add(-3 * time.Minute).Unix(), Close: 106},
-		}
-		quote := yahoo.Quote{Price: 107, ChangePercent: 0.5}
-		win := buildWindow("^KS11", "KOSPI", quote, series, nowBase)
-		Expect(win.OK).To(BeTrue())
-		// 1h 기준: nowBase-1h=12:38, at-or-before → -61min 점 (Close=104)
-		// 앵커 = lastTS = nowBase-3min
-		// 1h 윈도우 target = lastTS-1h = nowBase-63min → at-or-before는 -2h 점(Close=102)
-		Expect(win.Move1hPct).NotTo(BeNil())
-		Expect(*win.Move1hPct).To(BeNumerically("~", (107.0-102.0)/102.0*100.0, 0.1))
-		// 2h 윈도우 target = lastTS-2h = nowBase-123min → at-or-before는 -3h 점(Close=100)
-		Expect(win.Move2hPct).NotTo(BeNil())
-		Expect(*win.Move2hPct).To(BeNumerically("~", (107.0-100.0)/100.0*100.0, 0.1))
+	It("too distant anchors are unavailable even with a current quote", func() {
+		series := []yahoo.DailyClose{{DateUnix: nowBase.Add(-2 * time.Hour).Unix(), Close: 102}, {DateUnix: nowBase.Add(-3 * time.Minute).Unix(), Close: 106}}
+		win := buildWindow("NQ=F", "NQ", yahoo.Quote{Price: 107}, series, nowBase)
+		Expect(win.Current).To(Equal(106.0))
+		Expect(win.Move1hPct).To(BeNil())
+		Expect(win.Move2hPct).To(BeNil())
 	})
 
 	It("희소 시리즈(KRW=X): 45분 초과 간격 → Reason 설정", func() {
@@ -264,6 +252,6 @@ var _ = Describe("buildWindow", func() {
 		Expect(win.OK).To(BeTrue())
 		// 1h 기준: queryNow-1h=01:10 → at-or-before는 01:00 점(Close=19200)
 		Expect(win.Move1hPct).NotTo(BeNil())
-		Expect(*win.Move1hPct).To(BeNumerically("~", (19350.0-19200.0)/19200.0*100.0, 0.01))
+		Expect(*win.Move1hPct).To(BeNumerically("~", (19300.0-19200.0)/19200.0*100.0, 0.01))
 	})
 })

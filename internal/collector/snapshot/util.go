@@ -17,7 +17,8 @@ func firstRow(resp *auth.RESTResponse, keys ...string) map[string]any {
 }
 
 func num(row map[string]any, keys ...string) (float64, bool) {
-	return parse.Num(row, keys...)
+	v, ok := parse.Num(row, keys...)
+	return v, ok && !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 func parseNumber(value any) (float64, bool) {
@@ -39,7 +40,6 @@ func signedPercent(numerator float64, denominator float64) *float64 {
 	}
 	return ptr(numerator / denominator * 100)
 }
-
 
 func errText(err error) string {
 	if err == nil {

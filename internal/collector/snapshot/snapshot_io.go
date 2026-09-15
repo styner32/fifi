@@ -3,6 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/fifi/internal/fileio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,11 @@ import (
 // SnapshotJSON은 JSON 직렬화용 구조체입니다.
 // Snapshot 내부의 에러 맵은 직렬화가 안 되므로 주요 수치만 포함합니다.
 type SnapshotJSON struct {
+	SchemaVersion int                   `json:"schema_version"`
+	SessionStatus string                `json:"session_status"`
+	CompletedAt   time.Time             `json:"completed_at"`
+	Impact        *ImpactSection        `json:"impact"`
+	Cumulative    *CumulativeSection    `json:"cumulative"`
 	Date          string                `json:"date"`
 	Timestamp     time.Time             `json:"timestamp"`
 	Price         *PriceSection         `json:"price,omitempty"`
@@ -40,15 +46,24 @@ type MacroSectionJSON struct {
 
 // QuoteSummary는 종목 시세 요약입니다.
 type QuoteSummary struct {
-	Price         float64 `json:"price"`
-	ChangePercent float64 `json:"change_percent"`
+	PreviousClose  float64 `json:"previous_close"`
+	MarketTimeUnix int64   `json:"market_time_unix"`
+	Currency       string  `json:"currency"`
+	Source         string  `json:"source"`
+	Price          float64 `json:"price"`
+	ChangePercent  float64 `json:"change_percent"`
 }
 
 // ToJSON은 Snapshot을 JSON 직렬화용 구조체로 변환합니다.
 func (s *Snapshot) ToJSON() *SnapshotJSON {
+	date := s.BusinessDate
+	if date == "" {
+		date = s.Timestamp.Format("20060102")
+	}
 	j := &SnapshotJSON{
+		SchemaVersion: 2, SessionStatus: s.SessionStatus, CompletedAt: s.CompletedAt, Impact: s.Impact, Cumulative: s.Cumulative,
 		Timestamp:     s.Timestamp,
-		Date:          s.Timestamp.Format("20060102"),
+		Date:          date,
 		Price:         s.Price,
 		Flow:          s.Flow,
 		Volatility:    s.Volatility,
@@ -68,14 +83,14 @@ func (s *Snapshot) ToJSON() *SnapshotJSON {
 	if s.Global != nil && len(s.Global.Quotes) > 0 {
 		g := &GlobalSectionJSON{Quotes: map[string]QuoteSummary{}}
 		for k, q := range s.Global.Quotes {
-			g.Quotes[k] = QuoteSummary{Price: q.Price, ChangePercent: q.ChangePercent}
+			g.Quotes[k] = QuoteSummary{Price: q.Price, ChangePercent: q.ChangePercent, PreviousClose: q.PreviousClose, MarketTimeUnix: q.MarketTimeUnix, Currency: q.Currency, Source: "Yahoo"}
 		}
 		j.Global = g
 	}
 	if s.Macro != nil && len(s.Macro.Quotes) > 0 {
 		m := &MacroSectionJSON{Quotes: map[string]QuoteSummary{}}
 		for k, q := range s.Macro.Quotes {
-			m.Quotes[k] = QuoteSummary{Price: q.Price, ChangePercent: q.ChangePercent}
+			m.Quotes[k] = QuoteSummary{Price: q.Price, ChangePercent: q.ChangePercent, PreviousClose: q.PreviousClose, MarketTimeUnix: q.MarketTimeUnix, Currency: q.Currency, Source: "Yahoo"}
 		}
 		j.Macro = m
 	}
@@ -88,17 +103,22 @@ func SaveJSON(s *Snapshot, dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
-	date := s.Timestamp.Format("20060102")
-	fileName := fmt.Sprintf("market_snapshot.%s.json", date)
-	filePath := filepath.Join(dir, fileName)
+	date := s.ToJSON().Date
+	if !validDate(date) {
+		return "", fmt.Errorf("invalid snapshot date")
+	}
+	filePath := filepath.Join(dir, fmt.Sprintf("market_snapshot.%s.json", date))
+	// Keep the previous dated artifact before replacing the latest pointer.
+	if raw, e := os.ReadFile(filePath); e == nil {
+		archive := filepath.Join(dir, fmt.Sprintf("market_snapshot.%s.previous.%d.json", date, time.Now().UnixNano()))
+		if e = os.WriteFile(archive, raw, 0600); e != nil {
+			return "", e
+		}
+	}
+	if err := fileio.WriteJSONAtomic(filePath, s.ToJSON()); err != nil {
+		return "", err
+	}
 
-	data, err := json.MarshalIndent(s.ToJSON(), "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("marshal: %w", err)
-	}
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		return "", fmt.Errorf("write: %w", err)
-	}
 	return filePath, nil
 }
 
@@ -147,12 +167,18 @@ func LoadPreviousSnapshot(dir string, targetDate string) (*SnapshotJSON, error) 
 	if err := json.Unmarshal(raw, &prev); err != nil {
 		return nil, fmt.Errorf("unmarshal %s: %w", filePath, err)
 	}
+	if prev.Date != latest {
+		return nil, fmt.Errorf("snapshot filename/content date mismatch")
+	}
 	return &prev, nil
 }
 
 // LoadSnapshotForDate loads the snapshot JSON for the exact specified date if it exists.
 func LoadSnapshotForDate(dir string, date string) (*SnapshotJSON, error) {
 	normalized := strings.ReplaceAll(date, "-", "")
+	if !validDate(normalized) {
+		return nil, fmt.Errorf("invalid snapshot date")
+	}
 	filePath := filepath.Join(dir, fmt.Sprintf("market_snapshot.%s.json", normalized))
 	raw, err := os.ReadFile(filePath)
 	if err != nil {
@@ -165,6 +191,8 @@ func LoadSnapshotForDate(dir string, date string) (*SnapshotJSON, error) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, err
 	}
+	if s.Date != normalized {
+		return nil, fmt.Errorf("snapshot filename/content date mismatch")
+	}
 	return &s, nil
 }
-

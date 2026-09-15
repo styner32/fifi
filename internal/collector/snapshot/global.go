@@ -17,7 +17,11 @@ func collectGlobal(ctx context.Context, client YahooQuotes) (*GlobalSection, err
 		return nil, fmt.Errorf("yahoo dependency is nil")
 	}
 	quotes, err := client.GetQuotes(ctx, []string{"^N225", "NQ=F", "CL=F", "BTC-USD", "KRW=X"})
+	quotes = cleanQuotes(quotes)
 	if len(quotes) == 0 {
+		if err == nil {
+			err = fmt.Errorf("no valid quotes")
+		}
 		return nil, err
 	}
 	section := &GlobalSection{Quotes: quotes}

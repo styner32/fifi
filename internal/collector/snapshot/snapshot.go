@@ -2,11 +2,43 @@ package snapshot
 
 import (
 	"context"
+	"fmt"
+	"github.com/fifi/internal/kst"
+	"strings"
+	"time"
 )
 
 func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
-	date, ts := normalizeDate(opts.Date)
-	s := &Snapshot{Timestamp: ts, Errors: map[string]error{}}
+	now := time.Now().In(kst.Location)
+	if deps.Clock != nil {
+		now = deps.Clock().In(kst.Location)
+	}
+	date := strings.ReplaceAll(strings.TrimSpace(opts.Date), "-", "")
+	if date == "" {
+		date = now.Format("20060102")
+	}
+	s := &Snapshot{BusinessDate: date, Timestamp: now, Errors: map[string]error{}}
+	if !validDate(date) || date > now.Format("20060102") {
+		s.Errors["date"] = fmt.Errorf("invalid or future business date %s", date)
+		s.SessionStatus = "INVALID_DATE"
+		return s
+	}
+	historical := date != now.Format("20060102")
+	s.SessionStatus = "INTRADAY_PROVISIONAL"
+	if historical {
+		s.SessionStatus = "HISTORICAL_DATED_DATA_ONLY"
+	} else if now.Hour() < 9 {
+		s.SessionStatus = "PREOPEN"
+	} else if now.Hour()*60+now.Minute() >= 930 {
+		s.SessionStatus = "POST_CLOSE_UNRECONCILED"
+	}
+	opts.AsOf = now
+	if historical {
+		deps.Yahoo = nil
+		deps.Naver = nil
+		deps.DomesticFuture = nil
+	}
+
 	if section, err := collectPrice(ctx, deps.DomesticStock, date); err != nil {
 		s.Errors["price"] = err
 	} else {
@@ -28,7 +60,15 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 		s.Macro = section
 	}
 	s.Impact = collectImpact(ctx, deps, date, s.Flow, s.Price, opts)
-	s.Cumulative = collectCumulative(ctx, deps.DomesticStock, date, opts)
+	if s.Price != nil {
+		s.Price.Status = s.SessionStatus
+	}
+	if s.Flow != nil {
+		s.Flow.Status = s.SessionStatus
+	}
+	if !historical {
+		s.Cumulative = collectCumulative(ctx, deps.DomesticStock, date, opts)
+	}
 	// Section 7: 변동성
 	indexChange := 0.0
 	if s.Price != nil && s.Price.PreviousClose > 0 {
@@ -44,14 +84,22 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 	// Section 9: 매크로 채널/Regime
 	s.Regime = collectRegime(ctx, deps.Yahoo, s.Price, s.Volatility, s.Impact, s.Macro, s.Credit)
 	// Section 10: 집중도 (KOSPI 마스터 재사용)
-	s.Concentration = collectConcentration(ctx, deps.DomesticStock, date)
+	if !historical {
+		s.Concentration = collectConcentration(ctx, deps.DomesticStock, date)
+	}
 
 	// Section 11: 막판 수급 및 Capitulation 분석
-	if section, err := collectLateSession(ctx, deps, date, s.Price, opts); err != nil {
+	if historical {
+		s.Errors["late_session"] = fmt.Errorf("current-only endpoints excluded from historical report")
+	} else if section, err := collectLateSession(ctx, deps, date, s.Price, opts); err != nil {
 		s.Errors["late_session"] = err
 	} else {
 		s.LateSession = section
 	}
 
+	s.CompletedAt = time.Now().In(kst.Location)
+	if deps.Clock != nil {
+		s.CompletedAt = deps.Clock().In(kst.Location)
+	}
 	return s
 }

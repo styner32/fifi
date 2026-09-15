@@ -5,92 +5,64 @@ import (
 	"time"
 )
 
+var kst = time.FixedZone("KST", 9*3600)
+
 func Collect(ctx context.Context, deps Deps, opts Options) *PremarketReport {
 	now := time.Now()
 	if deps.Clock != nil {
 		now = deps.Clock()
 	}
-
+	now = now.In(kst)
 	date := now.Format("20060102")
 	if opts.Date != "" {
 		date = opts.Date
 	}
-
-	storeDir := opts.StoreDir
-	if storeDir == "" {
-		storeDir = deps.StoreDir
+	r := &PremarketReport{SchemaVersion: 2, Timestamp: now, Date: date, Errors: map[string]string{}}
+	r.DomesticInputs = emptyDomestic(now)
+	r.Calendar = emptyCalendar()
+	rawStock := deps.Stock
+	var memo *memoStock
+	if rawStock != nil {
+		memo = &memoStock{DomesticStock: rawStock, indices: map[string]dailyRowsResult{}, flows: map[string]flowResult{}}
+		deps.Stock = memo
 	}
-	store := NewStore(storeDir)
-
-	// Fetch current spot price approximations
-	var kospiPrice, kosdaqPrice float64
-	if deps.Stock != nil {
-		if resp, err := deps.Stock.InquireIndexPrice(ctx, "0001"); err == nil && resp != nil {
-			if r := firstRow(resp, "output"); r != nil {
-				kospiPrice, _ = num(r, "bstp_nmix_prpr")
-			}
+	target, err := time.ParseInLocation("20060102", date, kst)
+	if err != nil || target.After(now) {
+		r.Errors["date"] = "invalid or future report date"
+		r.Inputs = emptyInputs(now)
+	} else {
+		// Afternoon re-runs still select completed premarket cash sessions.
+		cutoff := target.Add(9 * time.Hour)
+		if now.Before(cutoff) {
+			cutoff = now
 		}
-		if resp, err := deps.Stock.InquireIndexPrice(ctx, "1001"); err == nil && resp != nil {
-			if r := firstRow(resp, "output"); r != nil {
-				kosdaqPrice, _ = num(r, "bstp_nmix_prpr")
-			}
-		}
-	}
-
-	// Fetch VKOSPI
-	var vkospiVal float64
-	if deps.Stock != nil {
-		if code, err := deps.Stock.ResolveVKOSPICode(ctx, nil); err == nil {
-			if resp, err := deps.Stock.InquireVKOSPIPrice(ctx, code); err == nil && resp != nil {
-				if r := firstRow(resp, "output"); r != nil {
-					vkospiVal, _ = num(r, "bstp_nmix_prpr")
-				}
-			}
+		r.CutoffAt = &cutoff
+		r.Inputs, r.DomesticCloseDate = collectInputs(ctx, deps, date, cutoff, now, r.Errors)
+		r.DomesticInputs = collectDomestic(ctx, rawStock, memo, date, r.DomesticCloseDate, now, r.Errors)
+		collectBreadth(ctx, deps.DailyPrices, r.DomesticCloseDate, now, r.DomesticInputs, r.Errors)
+		if deps.Calendar != nil {
+			r.Calendar = collectCalendar(ctx, deps.Calendar, target, cutoff, now)
+			r.Inputs["events"] = missing("EVENT_SCORING_NOT_IMPLEMENTED_CALENDAR_PARTIAL", now)
 		}
 	}
-
-	// Tier 1: Directional Vector
-	t1 := collectTier1(ctx, deps, kospiPrice, 1465.0)
-
-	// Tier 2: Amplification Vector
-	t2 := collectTier2(ctx, deps, store, kospiPrice, kosdaqPrice, vkospiVal, 1465.0, date)
-
-	// Tier 3: Confirmation Vector
-	t3 := collectTier3(ctx, -32000.0, 0.01)
-
-	// Vulnerability Matrix
-	vul := calculateVulnerabilityMatrix(t1, t2, t3)
-
-	// Hard Data Table (14 items)
-	hardData := collectHardData(ctx, deps, date, now)
-
-	report := &PremarketReport{
-		Timestamp: now,
-		Date:      date,
-		HardData:  hardData,
-		Tier1:     t1,
-		Tier2:     t2,
-		Tier3:     t3,
-		VUL:       vul,
+	dir := opts.StoreDir
+	if dir == "" {
+		dir = deps.StoreDir
 	}
-
-	// Persist to store if save enabled
-	if !opts.NoSave {
-		store.UpsertRecord(DailyRecord{
-			Date:                 date,
-			KOSPIPrice:           kospiPrice,
-			KOSDAQPrice:          kosdaqPrice,
-			CreditLoanBalanceEok: t2.CreditLoanBalanceEok,
-			MarginReceivableEok:  t2.MarginReceivableEok,
-			ForcedSellAmountEok:  t2.ForcedSellAmountEok,
-			CustomerDepositEok:   t2.CustomerDepositEok,
-			VKOSPI:               t2.VKOSPI,
-			SKHYADRClose:         t1.SKHYClose,
-			USSemiComposite:      t1.SemiComposite,
-			EchoEvents:           t2.EchoCalendar,
-		})
-		_ = store.Save()
+	store := NewStore(dir)
+	if store.Err != nil {
+		r.Errors["store_load"] = store.Err.Error()
 	}
-
-	return report
+	r.Tier1 = collectTier1(r.Inputs)
+	r.Tier2 = collectTier2(r.Inputs, store, date)
+	r.Tier3 = collectTier3()
+	r.VUL = calculateVulnerabilityMatrix(r.Tier1, r.Tier2, r.Inputs)
+	r.HardData = collectHardData(r.Inputs)
+	if !opts.NoSave && store.Err == nil && r.Errors["date"] == "" {
+		store.UpsertRecord(DailyRecord{Date: date, ObservedAt: now, Inputs: r.Inputs, DomesticInputs: r.DomesticInputs, Calendar: &r.Calendar})
+		if err := store.Save(); err != nil {
+			r.Errors["store_save"] = err.Error()
+		}
+	}
+	return r
 }

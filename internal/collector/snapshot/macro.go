@@ -19,7 +19,11 @@ func collectMacro(ctx context.Context, client YahooQuotes, opts Options) (*Macro
 		return nil, fmt.Errorf("yahoo dependency is nil")
 	}
 	quotes, err := client.GetQuotes(ctx, []string{"KRW=X", "CL=F", "^TNX"})
+	quotes = cleanQuotes(quotes)
 	if len(quotes) == 0 {
+		if err == nil {
+			err = fmt.Errorf("no valid quotes")
+		}
 		return nil, err
 	}
 	section := &MacroSection{Quotes: quotes, USDKRWMonthStart: opts.USDKRWMonthStart}

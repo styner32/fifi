@@ -24,11 +24,11 @@ func Render(p *Pulse) string {
 	}
 	if p.StoredCount > 0 && p.PrevTS != nil {
 		prevKST := p.PrevTS.In(kstLocation)
-		storeInfo = fmt.Sprintf("당일 적립 %d회 · 직전 %s", p.StoredCount, prevKST.Format("15:04"))
+		storeInfo = fmt.Sprintf("당일 적립 %d회 · 직전 %s", p.StoredCount, prevKST.Format("2006-01-02 15:04:05 KST"))
 	} else if p.StoredCount > 0 {
 		storeInfo = fmt.Sprintf("당일 적립 %d회", p.StoredCount)
 	} else {
-		storeInfo = "첫 실행 — 기준선 적립 중"
+		storeInfo = "비교 이력 없음 (1h/2h 수급 변화 N/A)"
 	}
 
 	isHoliday := IsHoliday("KRX", nowKST.Format("20060102"))
@@ -49,7 +49,7 @@ func Render(p *Pulse) string {
 	b.WriteString("\n")
 
 	// ── 2. 시장 안전장치 ───────────────────────────────────────────────────
-	b.WriteString("🚨 시장 안전장치 상태 및 근접도 (공식/추정 결합)\n")
+	b.WriteString("🚨 시장 안전장치 상태 및 근접도 (관측과 공식 확인 구분)\n")
 	renderMarketSafety(&b, p.Safety)
 	b.WriteString("\n")
 
@@ -66,34 +66,16 @@ func Render(p *Pulse) string {
 	b.WriteString("\n")
 
 	// ── 5. KOSPI 기여도 ─────────────────────────────────────────────────────
-	b.WriteString("🧱 KOSPI 시총 상위 10종목 기여도 추정 (전일 종가 가중치 기준)\n")
+	b.WriteString("🧱 KOSPI 편입표시·보통주 상위 10종목 참고 (KIS 마스터 기준)\n")
+	b.WriteString("  지수 영향·기여율: NOT_EVALUATED — 공식 구성종목·산출주식수·가중치 기준일 및 시세 정합성 미검증\n")
 	if len(p.Contributions) == 0 {
-		b.WriteString("  데이터 없음\n")
+		b.WriteString("  검증 가능한 종목별 참고 자료 없음\n")
 	} else {
-		var top10WeightSum float64
-		var top10ImpactSum float64
+		c := p.Contributions[0]
+		b.WriteString(fmt.Sprintf("  마스터 %s · %d종목 · 동일 집합 시가총액 분모 %.0f억원 · %s\n", c.MasterDate, c.UniverseCount, c.Denominator, c.WeightStatus))
 		for _, c := range p.Contributions {
-			top10WeightSum += c.WeightPct
-			top10ImpactSum += c.PointImpact
-			b.WriteString(fmt.Sprintf("  %-10s %-6s  등락 %+.2f%% · 비중 %.2f%% · %+.2fp\n",
-				c.Name, c.Code, c.ChangePct, c.WeightPct, c.PointImpact))
+			b.WriteString(fmt.Sprintf("  %-10s %-6s 등락 %+.2f%% · 마스터 시총비중 %.2f%%\n", c.Name, c.Code, c.ChangePct, c.WeightPct))
 		}
-		indexChangePoints := 0.0
-		if p.KOSPI.Index.OK && p.KOSPI.Index.PrevClose > 0 {
-			indexChangePoints = p.KOSPI.Index.Price - p.KOSPI.Index.PrevClose
-		}
-		explainedRatio := 0.0
-		dirLabel := ""
-		if math.Abs(indexChangePoints) > 0.0001 {
-			explainedRatio = (top10ImpactSum / indexChangePoints) * 100
-			if explainedRatio < 0 {
-				dirLabel = " · 역방향 괴리"
-			} else {
-				dirLabel = " · 동방향"
-			}
-		}
-		b.WriteString(fmt.Sprintf("  └ 상위 10종목 합계: 비중 %.2f%% · 지수 영향합 %+.2fp / 전체 변동 %+.2fp (기여율 %+.1f%%%s)\n",
-			top10WeightSum, top10ImpactSum, indexChangePoints, explainedRatio, dirLabel))
 	}
 	b.WriteString("\n")
 
@@ -153,6 +135,7 @@ func renderMarketIndex(b *strings.Builder, m Market) {
 		return
 	}
 
+	b.WriteString(fmt.Sprintf("  %s · %s\n", idx.Source, observationLabel(idx.LastTS, idx.FetchedAt, idx.Freshness)))
 	win1h := fmtPctPtr(m.IntradayWin.Move1hPct)
 	win2h := fmtPctPtr(m.IntradayWin.Move2hPct)
 
@@ -169,13 +152,13 @@ func renderMarketIndex(b *strings.Builder, m Market) {
 	))
 
 	if idx.Open > 0 {
-		b.WriteString(fmt.Sprintf("          시 %.2f / 고 %.2f / 저 %.2f",
-			idx.Open, idx.High, idx.Low))
+		b.WriteString(fmt.Sprintf("          시 %.2f / 고 %s / 저 %s",
+			idx.Open, positivePrice(idx.High), positivePrice(idx.Low)))
 		total := idx.TotalCount
 		if total == 0 {
 			total = idx.UpperLimit + idx.Advancers + idx.Unchanged + idx.Decliners + idx.LowerLimit
 		}
-		if total > 0 {
+		if idx.BreadthOK && total > 0 {
 			uplmStr := ""
 			if idx.UpperLimit > 0 {
 				uplmStr = fmt.Sprintf(" (상한 %d)", idx.UpperLimit)
@@ -184,11 +167,9 @@ func renderMarketIndex(b *strings.Builder, m Market) {
 			if idx.LowerLimit > 0 {
 				lslmStr = fmt.Sprintf(" (하한 %d)", idx.LowerLimit)
 			}
-			upTotal := idx.UpperLimit + idx.Advancers
-			upPct := float64(upTotal) / float64(total) * 100
-			b.WriteString(fmt.Sprintf("   상승 %d%s · 보합 %d · 하락 %d%s · 총 %d (상승비율 %.1f%%)",
-				idx.Advancers, uplmStr, idx.Unchanged, idx.Decliners, lslmStr, total, upPct))
-		} else if idx.Advancers+idx.Decliners > 0 {
+			b.WriteString(fmt.Sprintf("   상승 %d%s · 보합 %d · 하락 %d%s · 응답 분류합 %d (상·하한 포함관계 미확인)",
+				idx.Advancers, uplmStr, idx.Unchanged, idx.Decliners, lslmStr, total))
+		} else if idx.BreadthOK && idx.Advancers+idx.Decliners > 0 {
 			b.WriteString(fmt.Sprintf("   상승 %d · 하락 %d", idx.Advancers, idx.Decliners))
 		}
 		b.WriteString("\n")
@@ -202,14 +183,21 @@ func renderMarketFlow(b *strings.Builder, m Market) {
 		return
 	}
 
-	etcFrgnStr := ""
-	if math.Abs(flow.EtcForeign) > 0.001 {
+	b.WriteString(fmt.Sprintf("  %s · %s\n", flow.Source, observationLabel(flow.LastTS, flow.FetchedAt, "UNKNOWN")))
+	etcFrgnStr := " · 기타외국인 N/A"
+	if flow.EtcForeignOK {
+		etcFrgnStr = ""
+	}
+	if flow.EtcForeignOK && math.Abs(flow.EtcForeign) > 0.001 {
 		etcFrgnStr = fmt.Sprintf(" · 기타외국인 %s", fmtEok(flow.EtcForeign))
 	}
 
 	total := flow.Foreign + flow.Institution + flow.Individual + flow.EtcCorp + flow.EtcForeign
-	sumStr := "(합계 0억)"
-	if math.Abs(total) >= 1.0 {
+	sumStr := "(응답 주체 소계 · 전체 합계 확인 불가)"
+	if flow.EtcForeignOK {
+		sumStr = "(합계 0억)"
+	}
+	if flow.EtcForeignOK && math.Abs(total) >= 1.0 {
 		sumStr = fmt.Sprintf("(⚠️ 합계 불일치: %s)", fmtEok(total))
 	}
 
@@ -239,7 +227,7 @@ func renderMarketFlow(b *strings.Builder, m Market) {
 		if math.Abs(anchorTotal) >= 1.0 {
 			anchorWarn = fmt.Sprintf(" ⚠️ 불일치(%s)", fmtEok(anchorTotal))
 		}
-		b.WriteString(fmt.Sprintf("           당일시초대비: 외국인 %s · 기관 %s · 개인 %s · 기타법인 %s%s%s  (경과 %.1f분)\n",
+		b.WriteString(fmt.Sprintf("           당일 첫 수집 대비: 외국인 %s · 기관 %s · 개인 %s · 기타법인 %s%s%s  (경과 %.1f분)\n",
 			fmtEok(m.FlowDeltaAnchor.Foreign), fmtEok(m.FlowDeltaAnchor.Institution), fmtEok(m.FlowDeltaAnchor.Individual), fmtEok(m.FlowDeltaAnchor.EtcCorp), anchorEtcFrgn, anchorWarn, m.FlowDeltaAnchor.Elapsed))
 	}
 	if m.FlowDelta1h != nil {
@@ -276,7 +264,7 @@ func renderProgramTrade(b *strings.Builder, market string, cur ProgramTradeSnaps
 			fmtEok(prev.Arbitrage), fmtEok(prev.NonArbitrage), fmtEok(prev.Total), prev.Elapsed))
 	}
 	if anchor != nil {
-		b.WriteString(fmt.Sprintf("           당일시초대비: 차익 %s / 비차익 %s / 합계 %s  (경과 %.1f분)\n",
+		b.WriteString(fmt.Sprintf("           당일 첫 수집 대비: 차익 %s / 비차익 %s / 합계 %s  (경과 %.1f분)\n",
 			fmtEok(anchor.Arbitrage), fmtEok(anchor.NonArbitrage), fmtEok(anchor.Total), anchor.Elapsed))
 	}
 	if d1h != nil {
@@ -286,7 +274,7 @@ func renderProgramTrade(b *strings.Builder, market string, cur ProgramTradeSnaps
 	if cur.AsOf == "close" {
 		b.WriteString("           └ 장마감 적용\n")
 	} else if len(cur.AsOf) >= 4 {
-		b.WriteString(fmt.Sprintf("           └ 집계시점 %s:%s\n", cur.AsOf[:2], cur.AsOf[2:4]))
+		b.WriteString(fmt.Sprintf("           └ 응답 집계시각 %s:%s (관측 날짜 미확인)\n", cur.AsOf[:2], cur.AsOf[2:4]))
 	}
 }
 
@@ -330,7 +318,7 @@ func renderMarketSafety(b *strings.Builder, safety MarketSafety) {
 
 		statusDetail := d.EligibilityReason
 		if d.State == "TRIGGERED" {
-			statusDetail = fmt.Sprintf("실제 발동 중 (발동시각 %s · 해제예정 %s)", d.TriggeredAt, d.ReleasedAt)
+			statusDetail = fmt.Sprintf("공식 발동 기록 (발동시각 %s · 확인된 해제시각 %s)", d.TriggeredAt, d.ReleasedAt)
 		} else if d.State == "RELEASED" {
 			statusDetail = fmt.Sprintf("발동 후 해제됨 (발동시각 %s)", d.TriggeredAt)
 		} else if d.State == "CONDITION_OBSERVED" {
@@ -353,11 +341,9 @@ func RenderSafetyOnly(p *Pulse) string {
 }
 
 func renderDomesticDerivatives(b *strings.Builder, p *Pulse) {
-	if p.KOSPI200Future.OK {
-		regime := "콘탱고"
-		if p.KOSPI200Future.Basis < 0 {
-			regime = "백워데이션"
-		}
+	if p.KOSPI200Future.OK && p.KOSPI200Future.SpotOK {
+		b.WriteString("  " + observationLabel(p.KOSPI200Future.LastTS, p.KOSPI200Future.FetchedAt, p.KOSPI200Future.Freshness) + "\n")
+		regime := p.KOSPI200Future.Alignment
 		b.WriteString(fmt.Sprintf("  KOSPI200 선물 %s  %.2f (%+.2f%%) · 현물 %.2f · 단순스프레드(raw_spread) %+.2fp (%s)\n",
 			p.KOSPI200Future.Code, p.KOSPI200Future.Price, p.KOSPI200Future.ChangePct,
 			p.KOSPI200Future.SpotPrice, p.KOSPI200Future.Basis, regime))
@@ -365,7 +351,7 @@ func renderDomesticDerivatives(b *strings.Builder, p *Pulse) {
 			b.WriteString(fmt.Sprintf("           직전대비 스프레드 변동: %+.2fp\n", p.BasisDeltaPrev.Value))
 		}
 		if p.BasisDeltaAnchor != nil {
-			b.WriteString(fmt.Sprintf("           당일시초대비 스프레드 변동: %+.2fp\n", p.BasisDeltaAnchor.Value))
+			b.WriteString(fmt.Sprintf("           당일 첫 수집 대비 스프레드 변동: %+.2fp\n", p.BasisDeltaAnchor.Value))
 		}
 		if p.BasisDelta1h != nil {
 			b.WriteString(fmt.Sprintf("           최근1h 스프레드 변동: %+.2fp\n", p.BasisDelta1h.Value))
@@ -374,6 +360,7 @@ func renderDomesticDerivatives(b *strings.Builder, p *Pulse) {
 		b.WriteString("  KOSPI200 선물 데이터 없음\n")
 	}
 	if p.VKOSPI.OK {
+		b.WriteString("  " + observationLabel(p.VKOSPI.LastTS, p.VKOSPI.FetchedAt, p.VKOSPI.Freshness) + "\n")
 		b.WriteString(fmt.Sprintf("  VKOSPI %.2f  전일 %+.2f%% · %s\n", p.VKOSPI.Value, p.VKOSPI.ChangePct, p.VKOSPI.Source))
 	} else {
 		b.WriteString("  VKOSPI 데이터 없음\n")
@@ -418,11 +405,11 @@ func renderWindowLine(b *strings.Builder, label string, w Window) {
 
 	lastStr := ""
 	if !w.LastTS.IsZero() {
-		lastStr = fmt.Sprintf("  @%s", w.LastTS.In(kstLocation).Format("15:04"))
+		lastStr = fmt.Sprintf("  @%s", w.LastTS.In(kstLocation).Format("2006-01-02 15:04:05 KST"))
 	}
 
 	reasonStr := ""
-	if w.Freshness == "HOLIDAY" || w.Freshness == "STALE" {
+	if w.Reason != "" {
 		reasonStr = fmt.Sprintf(" [%s]", w.Reason)
 	}
 
@@ -435,12 +422,16 @@ func renderWindowLine(b *strings.Builder, label string, w Window) {
 		refStr = fmt.Sprintf(" (기준 %.2f%s)", w.PrevClose, unit)
 	}
 
-	b.WriteString(fmt.Sprintf("%-22s  %10.4f  전일 %s%s%%%s   1h %s  2h %s%s%s\n",
+	changeStr := "N/A"
+	if w.ChangeOK {
+		changeStr = fmtPct(w.ChangePct)
+	}
+	b.WriteString(fmt.Sprintf("%-22s  %10.4f  기준대비 %s%s   1h %s  2h %s%s%s\n",
 		label, w.Current,
-		arrowNeutral(w.ChangePct), fmt.Sprintf("%.2f", w.ChangePct),
+		changeStr,
 		refStr,
 		move1h, move2h,
-		lastStr,
+		lastStr+" ["+w.Freshness+"]",
 		reasonStr,
 	))
 }
@@ -461,85 +452,49 @@ func renderYieldLine(b *strings.Builder, label string, w Window) {
 		ref := w.Current / denom
 		return fmt.Sprintf("%+.1fbp", (w.Current-ref)*100)
 	}
-	change := w.ChangePct
+	var change *float64
+	if w.ChangeOK {
+		change = &w.ChangePct
+	}
 	lastStr := ""
 	if !w.LastTS.IsZero() {
-		lastStr = fmt.Sprintf("  @%s", w.LastTS.In(kstLocation).Format("15:04"))
+		lastStr = fmt.Sprintf("  @%s", w.LastTS.In(kstLocation).Format("2006-01-02 15:04:05 KST"))
 	}
 	reasonStr := ""
-	if w.Freshness == "HOLIDAY" || w.Freshness == "STALE" {
+	if w.Reason != "" {
 		reasonStr = fmt.Sprintf(" [%s]", w.Reason)
 	}
 	b.WriteString(fmt.Sprintf("%-20s  %7.3f%%  전일 %s   1h %s  2h %s%s%s\n",
-		label, w.Current, toBP(&change), toBP(w.Move1hPct), toBP(w.Move2hPct), lastStr, reasonStr))
+		label, w.Current, toBP(change), toBP(w.Move1hPct), toBP(w.Move2hPct), lastStr+" ["+w.Freshness+"]", reasonStr))
 }
 
 // RenderJSON은 Pulse를 간단한 JSON 요약으로 변환합니다 (--json 플래그용).
 // 실제 JSON 직렬화는 encoding/json을 통해 호출자가 처리합니다.
 func PulseToMap(p *Pulse) map[string]any {
-	nowKST := p.Now.In(kstLocation)
-	return map[string]any{
-		"ts":            nowKST.Format(time.RFC3339),
-		"date":          p.Date,
-		"business_date": p.BusinessDate,
-		"stored_count":  p.StoredCount,
-		"kospi": map[string]any{
-			"price":      p.KOSPI.Index.Price,
-			"change_pct": p.KOSPI.Index.ChangePct,
-			"move_1h":    p.KOSPI.IntradayWin.Move1hPct,
-			"move_2h":    p.KOSPI.IntradayWin.Move2hPct,
-			"flow": map[string]any{
-				"foreign":     p.KOSPI.Flow.Foreign,
-				"institution": p.KOSPI.Flow.Institution,
-				"individual":  p.KOSPI.Flow.Individual,
-				"etc_corp":    p.KOSPI.Flow.EtcCorp,
-				"etc_foreign": p.KOSPI.Flow.EtcForeign,
-				"fin_invest":  p.KOSPI.Flow.FinInvest,
-				"insurance":   p.KOSPI.Flow.Insurance,
-				"inv_trust":   p.KOSPI.Flow.InvTrust,
-				"etc_fin":     p.KOSPI.Flow.EtcFin,
-				"bank":        p.KOSPI.Flow.Bank,
-				"pension":     p.KOSPI.Flow.Pension,
-				"priv_equity": p.KOSPI.Flow.PrivEquity,
-			},
-		},
-		"kosdaq": map[string]any{
-			"price":      p.KOSDAQ.Index.Price,
-			"change_pct": p.KOSDAQ.Index.ChangePct,
-			"move_1h":    p.KOSDAQ.IntradayWin.Move1hPct,
-			"move_2h":    p.KOSDAQ.IntradayWin.Move2hPct,
-			"flow": map[string]any{
-				"foreign":     p.KOSDAQ.Flow.Foreign,
-				"institution": p.KOSDAQ.Flow.Institution,
-				"individual":  p.KOSDAQ.Flow.Individual,
-				"etc_corp":    p.KOSDAQ.Flow.EtcCorp,
-				"etc_foreign": p.KOSDAQ.Flow.EtcForeign,
-				"fin_invest":  p.KOSDAQ.Flow.FinInvest,
-				"insurance":   p.KOSDAQ.Flow.Insurance,
-				"inv_trust":   p.KOSDAQ.Flow.InvTrust,
-				"etc_fin":     p.KOSDAQ.Flow.EtcFin,
-				"bank":        p.KOSDAQ.Flow.Bank,
-				"pension":     p.KOSDAQ.Flow.Pension,
-				"priv_equity": p.KOSDAQ.Flow.PrivEquity,
-			},
-		},
-		"usdkrw": map[string]any{
-			"price":   p.USDKRW.Current,
-			"move_1h": p.USDKRW.Move1hPct,
-		},
-		"market_safety": p.Safety,
-		"program_trade": map[string]any{
-			"kospi": p.KOSPIProgram, "kosdaq": p.KOSDAQProgram,
-			"kospi_delta": p.KOSPIProgramDelta, "kosdaq_delta": p.KOSDAQProgramDelta,
-		},
-		"kospi200_future":     p.KOSPI200Future,
-		"basis_delta_1h":      p.BasisDelta1h,
-		"basis_delta_2h":      p.BasisDelta2h,
-		"vkospi":              p.VKOSPI,
-		"kospi_contributions": p.Contributions,
-		"analysis":            p.Analysis,
-		"errors":              p.Errors,
+	marketMap := func(m Market) map[string]any {
+		var price, change any
+		if m.Index.OK {
+			price = m.Index.Price
+			change = m.Index.ChangePct
+		}
+		flow := map[string]any{"ok": m.Flow.OK, "source": m.Flow.Source, "last_ts": nullableTime(m.Flow.LastTS), "fetched_at": m.Flow.FetchedAt}
+		for key, v := range map[string]float64{"foreign": m.Flow.Foreign, "institution": m.Flow.Institution, "individual": m.Flow.Individual, "etc_corp": m.Flow.EtcCorp, "etc_foreign": m.Flow.EtcForeign, "fin_invest": m.Flow.FinInvest, "insurance": m.Flow.Insurance, "inv_trust": m.Flow.InvTrust, "etc_fin": m.Flow.EtcFin, "bank": m.Flow.Bank, "pension": m.Flow.Pension, "priv_equity": m.Flow.PrivEquity} {
+			flow[key] = nil
+			if m.Flow.OK && (key != "etc_foreign" || m.Flow.EtcForeignOK) {
+				flow[key] = v
+			}
+		}
+		return map[string]any{"price": price, "change_pct": change, "ok": m.Index.OK, "index": m.Index, "window": m.IntradayWin, "move_1h": m.IntradayWin.Move1hPct, "move_2h": m.IntradayWin.Move2hPct, "flow": flow, "flow_delta_prev": m.FlowDeltaPrev, "flow_delta_first": m.FlowDeltaAnchor, "flow_delta_1h": m.FlowDelta1h, "flow_delta_2h": m.FlowDelta2h}
 	}
+	return map[string]any{"schema_version": 2, "ts": p.Now, "date": p.Date, "business_date": p.BusinessDate, "stored_count": p.StoredCount, "kospi": marketMap(p.KOSPI), "kosdaq": marketMap(p.KOSDAQ), "usdkrw": p.USDKRW, "macro": p.Macro, "market_safety": p.Safety, "program_trade": map[string]any{"kospi": p.KOSPIProgram, "kosdaq": p.KOSDAQProgram, "kospi_delta": p.KOSPIProgramDelta, "kosdaq_delta": p.KOSDAQProgramDelta}, "kospi200_future": p.KOSPI200Future, "kosdaq150_future": p.KOSDAQ150Future, "basis_delta_1h": p.BasisDelta1h, "basis_delta_2h": p.BasisDelta2h, "vkospi": p.VKOSPI, "kospi_contributions": p.Contributions, "assessment": p.Assessment, "analysis": p.Analysis, "errors": p.Errors}
+}
+
+func observationLabel(ts, fetched time.Time, fresh string) string {
+	observed := "관측 시각 미확인"
+	if !ts.IsZero() {
+		observed = "관측 " + ts.In(kstLocation).Format("2006-01-02 15:04:05 KST")
+	}
+	return fmt.Sprintf("%s · 조회 시작 %s [%s]", observed, fetched.In(kstLocation).Format("2006-01-02 15:04:05 KST"), fresh)
 }
 
 func fmtPct(v float64) string { return format.Percent(v) }
@@ -549,7 +504,19 @@ func fmtPctPtr(v *float64) string {
 	}
 	return format.Percent(*v)
 }
-func fmtEok(v float64) string { return format.EokArrow(v) }
+func fmtEok(v float64) string       { return format.EokArrow(v) }
 func fmtAmountEok(v float64) string { return format.AmountEok(v) }
 func arrowNeutral(v float64) string { return format.ArrowNeutral(v) }
 
+func positivePrice(v float64) string {
+	if v <= 0 || !finite(v) {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.2f", v)
+}
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}

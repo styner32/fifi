@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -61,10 +62,11 @@ func LoadRecords(dir, date string) ([]PulseRecord, error) {
 		}
 		var rec PulseRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
-			continue // 손상된 줄 무시
+			return nil, fmt.Errorf("corrupt pulse history: %w", err)
 		}
 		records = append(records, rec)
 	}
+	sort.SliceStable(records, func(i, j int) bool { return records[i].TS.Before(records[j].TS) })
 	return records, sc.Err()
 }
 
@@ -74,7 +76,7 @@ func LoadNearest(records []PulseRecord, target time.Time) *PulseRecord {
 	var best *PulseRecord
 	for i := range records {
 		rec := &records[i]
-		if !rec.TS.After(target) {
+		if sameDay(rec.TS, target) && !rec.TS.After(target) && target.Sub(rec.TS) <= 5*time.Minute {
 			if best == nil || rec.TS.After(best.TS) {
 				best = rec
 			}

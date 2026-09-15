@@ -58,9 +58,12 @@ git submodule update --remote --merge external/open-trading-api
 
 ## 실행 및 테스트 (Run & Test)
 
+Go 테스트는 **Ginkgo v2 + Gomega의 BDD 스타일**로 작성합니다. 신규·수정 테스트는 `Describe` → `Context` → `It`을 사용하고, 반복 사례는 `DescribeTable`로 표현합니다. 작성 규칙과 실행 예시는 [테스트 가이드](docs/TESTING.md)를 참고하세요.
+
 ### 1. 기본 실행 및 전체 테스트
+
 ```bash
-# 전체 테스트 실행
+# 전체 테스트 실행 (Ginkgo 스위트 포함, make test와 동일)
 go test ./...
 
 # 국내 주식 / 선물옵션 / 기업분석 통합 실행

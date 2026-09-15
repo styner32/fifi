@@ -175,6 +175,9 @@ func (s *Service) inquireIndexDailyPriceWithMarket(ctx context.Context, indexCod
 		if err != nil {
 			return nil, err
 		}
+		if !resp.IsOK() {
+			return nil, fmt.Errorf("index daily price business error")
+		}
 		rows = append(rows, toRows(resp.Body["output2"])...)
 		headerValue := strings.TrimSpace(resp.Headers.Get("tr_cont"))
 		if headerValue != "M" && headerValue != "F" {
@@ -188,4 +191,3 @@ func (s *Service) inquireIndexDailyPriceWithMarket(ctx context.Context, indexCod
 	}
 	return rows, nil
 }
-

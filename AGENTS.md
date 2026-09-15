@@ -34,7 +34,12 @@ This file documents the project's technology stack, architectural decisions, dev
 - **Use Case:** Use Go CLI tools (`cmd/agent`, `cmd/dart-filing-worker-cli`) or Ruby for utility scripts and data automation.
 
 ### Testing
-- **Unit & Integration:** Go standard testing + Ginkgo/Gomega (`make test` / `go test ./...`).
+- **Required Go test style:** Write all new or modified unit, integration, and regression test cases with **Ginkgo v2 + Gomega in BDD style**.
+- Organize behavior with `Describe` → `Context` → `It`. Use `DescribeTable` / `Entry` for repeated cases and Gomega matchers for assertions.
+- Reuse the package's existing `*_suite_test.go`. The standard `testing` package and `TestXxx(t *testing.T)` are used for the Ginkgo suite entry point (`RegisterFailHandler` / `RunSpecs`), not standalone behavior tests. Do not add `t.Run` / `t.Fatal` based test cases.
+- Keep each spec independent with `BeforeEach`, fixed inputs/clocks, and `GinkgoT().TempDir()` where needed. Preserve existing regression coverage when converting a test; unrelated legacy tests do not require a bulk rewrite.
+- Run the affected suites with `go test` (and `-race` when appropriate). `make test` / `go test ./...` also execute Ginkgo suites; using these commands does not mean writing standard-library test cases.
+- Follow [the testing guide](docs/TESTING.md) for examples and verification practices.
 
 ## Project Structure
 - `cmd/`: Entry points for applications (`main.go`, `agent/`, `dart-filing-api/`, `dart-filing-worker/`, `dart-filing-worker-cli/`, `dart-filing-mcp/`).

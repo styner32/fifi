@@ -8,28 +8,34 @@ import (
 
 // ConcentrationSection은 코스피 시총 집중도 지표를 담습니다.
 type ConcentrationSection struct {
-	Top5Percent            float64       `json:"top_5_percent"`  // 상위 5종목 시총 비중 (%)
-	Top10Percent           float64       `json:"top_10_percent"` // 상위 10종목 시총 비중 (%)
-	HHI                    float64       `json:"hhi"`            // Herfindahl-Hirschman Index
-	HHILevel               string        `json:"hhi_level"`      // "비집중"/"중간 집중"/"고집중"
-	HHIStatus              string        `json:"hhi_status,omitempty"` // HHI_LOW_BY_CUSTOM_THRESHOLD
-	RiskLevel              string        `json:"risk_level"`     // 상위 종목 집중 위험 ("🟢 보통"/"🟡 높음"/"🔴 매우 높음")
-	Top2ConcentrationStatus string       `json:"top_2_concentration_status,omitempty"` // TOP2_CONCENTRATION_EXTREME
-	Reason                 string        `json:"-"`
-	Date                   string        `json:"date,omitempty"` // KOSPI 마스터 영업일
-	Status                 QualityStatus `json:"status,omitempty"`
-	QualityFlags           []string      `json:"quality_flags,omitempty"`
+	Universe                string        `json:"universe"`
+	WeightStatus            string        `json:"weight_status"`
+	DenominatorEok          float64       `json:"denominator_eok"`
+	UniverseCount           int           `json:"universe_count"`
+	Top2Percent             float64       `json:"top_2_percent"`
+	SourcePath              string        `json:"source_path"`
+	Top5Percent             float64       `json:"top_5_percent"`                        // 상위 5종목 시총 비중 (%)
+	Top10Percent            float64       `json:"top_10_percent"`                       // 상위 10종목 시총 비중 (%)
+	HHI                     float64       `json:"hhi"`                                  // Herfindahl-Hirschman Index
+	HHILevel                string        `json:"hhi_level"`                            // "비집중"/"중간 집중"/"고집중"
+	HHIStatus               string        `json:"hhi_status,omitempty"`                 // HHI_LOW_BY_CUSTOM_THRESHOLD
+	RiskLevel               string        `json:"risk_level"`                           // 상위 종목 집중 위험 ("🟢 보통"/"🟡 높음"/"🔴 매우 높음")
+	Top2ConcentrationStatus string        `json:"top_2_concentration_status,omitempty"` // TOP2_CONCENTRATION_EXTREME
+	Reason                  string        `json:"reason,omitempty"`
+	Date                    string        `json:"date,omitempty"` // KOSPI 마스터 영업일
+	Status                  QualityStatus `json:"status,omitempty"`
+	QualityFlags            []string      `json:"quality_flags,omitempty"`
 }
 
 // collectConcentration은 KOSPIMarketCapSummary Constituents를 재사용합니다.
 // Constituents는 시총 내림차순 정렬 상태 (market_cap_summary.go 참고).
 func collectConcentration(ctx context.Context, stock DomesticStock, date string) *ConcentrationSection {
-	s := &ConcentrationSection{}
+	s := &ConcentrationSection{Status: StatusUnavailable}
 	if stock == nil {
 		s.Reason = "domestic stock dependency is nil"
 		return s
 	}
-	summary, err := stock.KOSPIMarketCapSummary(ctx, date)
+	summary, err := indexCapSummary(ctx, stock, date)
 	if err != nil {
 		s.Reason = err.Error()
 		return s
@@ -43,8 +49,25 @@ func collectConcentration(ctx context.Context, stock DomesticStock, date string)
 	s.HHI = calcHHI(summary.Constituents, summary.TotalMarketCap)
 	s.HHILevel = hhiLevel(s.HHI)
 	s.HHIStatus = "HHI_LOW_BY_CUSTOM_THRESHOLD"
+	if s.HHI >= 1500 {
+		s.HHIStatus = "HHI_MEDIUM_BY_CUSTOM_THRESHOLD"
+	}
+	if s.HHI >= 2500 {
+		s.HHIStatus = "HHI_HIGH_BY_CUSTOM_THRESHOLD"
+	}
 	s.RiskLevel = concentrationRisk(summary.Constituents, s.Top5Percent)
-	s.Top2ConcentrationStatus = "TOP2_CONCENTRATION_EXTREME"
+	s.Top2Percent = topNCapPercent(summary.Constituents, 2, summary.TotalMarketCap)
+	s.Top2ConcentrationStatus = "TOP2_BELOW_CUSTOM_THRESHOLD"
+	if s.Top2Percent > 45 {
+		s.Top2ConcentrationStatus = "TOP2_CONCENTRATION_EXTREME"
+	} else if s.RiskLevel == "🔴 매우 높음 (반도체 쏠림)" {
+		s.RiskLevel = "사용자 정의 상위 2종목 임계값(45%) 미만"
+	}
+	s.Universe = summary.Universe
+	s.WeightStatus = summary.WeightStatus
+	s.DenominatorEok = summary.TotalMarketCap
+	s.UniverseCount = len(summary.Constituents)
+	s.SourcePath = summary.SourcePath
 	s.Date = summary.BusinessDate
 
 	// Auto-validation: HHI >= sum(weight^2) of known weights (top 5 weights)
@@ -56,10 +79,13 @@ func collectConcentration(ctx context.Context, stock DomesticStock, date string)
 		top5Weights = append(top5Weights, c.MarketCap/summary.TotalMarketCap*100)
 	}
 	s.Status, s.QualityFlags = ValidateHHI(s.HHI, top5Weights)
+	if s.Status == StatusValid {
+		s.Status = StatusEstimated
+		s.QualityFlags = append(s.QualityFlags, summary.WeightStatus)
+	}
 
 	return s
 }
-
 
 func topNCapPercent(cs []domesticstock.KOSPIMarketCapConstituent, n int, total float64) float64 {
 	sum := 0.0
