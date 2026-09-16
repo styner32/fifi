@@ -1,13 +1,22 @@
 package routes
 
 import (
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/fifi/internal/dartfiling/config"
 	"github.com/fifi/internal/dartfiling/controllers"
-	"strings"
-
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
+
+type clientLimiter struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
 
 // SetupRouter initializes all services, controllers, and API routes
 func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
@@ -15,6 +24,49 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Set up Gin router
 	router := gin.Default()
+
+	// IP-based rate limiting
+	var limiters = make(map[string]*clientLimiter)
+	var mu sync.Mutex
+
+	// Cleanup stale limiters periodically
+	go func() {
+		for {
+			time.Sleep(5 * time.Minute)
+			mu.Lock()
+			for ip, client := range limiters {
+				if time.Since(client.lastSeen) > 10*time.Minute {
+					delete(limiters, ip)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
+	getLimiter := func(ip string) *rate.Limiter {
+		mu.Lock()
+		defer mu.Unlock()
+
+		client, exists := limiters[ip]
+		if !exists {
+			client = &clientLimiter{
+				limiter: rate.NewLimiter(rate.Limit(10), 20), // 10 req/s, burst of 20
+			}
+			limiters[ip] = client
+		}
+		client.lastSeen = time.Now()
+		return client.limiter
+	}
+
+	router.Use(func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		limiter := getLimiter(clientIP)
+		if !limiter.Allow() {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests"})
+			return
+		}
+		c.Next()
+	})
 
 	// Parse allowed origins (trimmed single "*" means open CORS without credentials only)
 	allowedOriginsRaw := strings.TrimSpace(cfg.AllowedOrigins)
