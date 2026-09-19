@@ -16,3 +16,8 @@
 **Learning:** The issue existed because input was blindly concatenated without escaping specific SQL wildcard characters. While GORM parameterizes queries to prevent SQL injection, it does not automatically escape wildcards within LIKE/ILIKE patterns.
 **Prevention:** Always sanitize/escape wildcard characters (`\`, `%`, `_`) in user-provided input before incorporating it into a LIKE/ILIKE clause.
 >>>>>>> 1901c84 (🛡️ Sentinel: [MEDIUM] Fix Wildcard Injection in ILIKE queries)
+
+## 2025-03-09 - [CRITICAL] Fix Insecure File Permissions for Sensitive Data
+**Vulnerability:** Files and directories intended to cache or store sensitive API data (like authentication tokens and financial reports) were created with overly permissive file modes (0o755 for directories and 0o644 for files). This potentially exposed sensitive tokens and data to unauthorized processes running on the same host.
+**Learning:** Using default permissive modes via `os.MkdirAll`, `os.WriteFile`, or `os.Create` (which uses 0666) for credential caches or downloaded raw reports risks local data exposure.
+**Prevention:** Always use restrictive file modes (e.g., 0o700 for directories and 0o600 for files) for caching tokens or financial data, and use `os.OpenFile` with explicit permissions instead of `os.Create`.

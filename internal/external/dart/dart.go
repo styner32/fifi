@@ -357,7 +357,7 @@ func (c *DartClient) processDoc(it List) error {
 	} else {
 		// create a folder if not exists
 		if _, err := os.Stat(folder); err != nil {
-			if err := os.MkdirAll(folder, 0755); err != nil {
+			if err := os.MkdirAll(folder, 0o700); err != nil {
 				return err
 			}
 		}
@@ -367,7 +367,7 @@ func (c *DartClient) processDoc(it List) error {
 			return err
 		}
 
-		f, err := os.Create(filename)
+		f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return err
 		}
@@ -399,23 +399,23 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 	compactFolder := fmt.Sprintf("data/compact/%s", corpCode)
 
 	if _, err := os.Stat(compactFolder); err != nil {
-		if err := os.MkdirAll(compactFolder, 0755); err != nil {
+		if err := os.MkdirAll(compactFolder, 0o700); err != nil {
 			return err
 		}
 	}
 
 	compactFilename := fmt.Sprintf("%s/%s.json", compactFolder, corpCode)
-	if err := os.WriteFile(compactFilename, j, 0644); err != nil {
+	if err := os.WriteFile(compactFilename, j, 0o600); err != nil {
 		return err
 	}
 
 	markdownFolder := fmt.Sprintf("data/markdowns/%s", corpCode)
 	if _, err := os.Stat(markdownFolder); err != nil {
-		if err := os.MkdirAll(markdownFolder, 0755); err != nil {
+		if err := os.MkdirAll(markdownFolder, 0o700); err != nil {
 			return err
 		}
 	}
 
 	markdownFilename := fmt.Sprintf("%s/%s.md", markdownFolder, corpCode)
-	return os.WriteFile(markdownFilename, []byte(xbrl.ReportToMarkdown(report)), 0644)
+	return os.WriteFile(markdownFilename, []byte(xbrl.ReportToMarkdown(report)), 0o600)
 }
