@@ -16,3 +16,8 @@
 **Learning:** The issue existed because input was blindly concatenated without escaping specific SQL wildcard characters. While GORM parameterizes queries to prevent SQL injection, it does not automatically escape wildcards within LIKE/ILIKE patterns.
 **Prevention:** Always sanitize/escape wildcard characters (`\`, `%`, `_`) in user-provided input before incorporating it into a LIKE/ILIKE clause.
 >>>>>>> 1901c84 (🛡️ Sentinel: [MEDIUM] Fix Wildcard Injection in ILIKE queries)
+
+## 2026-09-20 - [Insecure File Permissions] Fix overly permissive folder and file writes in internal/external/dart/dart.go
+**Vulnerability:** Files and directories were being created with permissive permissions (`0755` for directories, `0644` for files, and `os.Create` inheriting umask) in `internal/external/dart/dart.go`.
+**Learning:** This exposes downloaded documents, caches, and potentially sensitive tokens to other users on the system, which can be an easy vector for data exposure or tampering on shared servers.
+**Prevention:** Always use restrictive permissions such as `0o750` for directories and `0o600` for files, and explicitly provide permissions using `os.OpenFile` rather than relying on `os.Create`.
