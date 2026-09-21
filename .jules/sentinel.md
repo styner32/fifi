@@ -16,3 +16,8 @@
 **Learning:** The issue existed because input was blindly concatenated without escaping specific SQL wildcard characters. While GORM parameterizes queries to prevent SQL injection, it does not automatically escape wildcards within LIKE/ILIKE patterns.
 **Prevention:** Always sanitize/escape wildcard characters (`\`, `%`, `_`) in user-provided input before incorporating it into a LIKE/ILIKE clause.
 >>>>>>> 1901c84 (🛡️ Sentinel: [MEDIUM] Fix Wildcard Injection in ILIKE queries)
+
+## 2026-09-21 - [High] Insecure File and Directory Permissions Allowing Credential Leaks
+**Vulnerability:** Files containing sensitive data like cached authentication tokens (`auth.go`) and raw dart API reports (`dart.go`) were created using overly permissive directory (`0755`/`0o755`) and file (`0644`/`0o644`) permissions. This could allow unauthorized users on the same system to access sensitive data.
+**Learning:** Default or copy-pasted permission values (`0755`, `0644`) in `os.MkdirAll` and `os.WriteFile` do not limit read access strictly to the owner of the process, leaving credentials unprotected against local snooping.
+**Prevention:** When creating directories or files that store credentials or sensitive data (like token caches), always use strict permissions (e.g., `0o700` or `0o750` for directories and `0o600` for files) to enforce the principle of least privilege and prevent data leaks.
