@@ -16,3 +16,8 @@
 **Learning:** The issue existed because input was blindly concatenated without escaping specific SQL wildcard characters. While GORM parameterizes queries to prevent SQL injection, it does not automatically escape wildcards within LIKE/ILIKE patterns.
 **Prevention:** Always sanitize/escape wildcard characters (`\`, `%`, `_`) in user-provided input before incorporating it into a LIKE/ILIKE clause.
 >>>>>>> 1901c84 (🛡️ Sentinel: [MEDIUM] Fix Wildcard Injection in ILIKE queries)
+
+## 2025-03-09 - [Insecure File and Directory Permissions]
+**Vulnerability:** Files and directories were being created with excessively permissive modes (e.g. `0755` for directories, `0644` for files, and default permissions in `os.Create`). This can lead to unauthorized users on the same system reading sensitive data, such as OAuth tokens and parsed reports.
+**Learning:** Default permissions in Go standard library functions like `os.Create` and explicitly passed permissions like `0755` or `0644` are often too broad. Token caches and data storage directories need stricter access control.
+**Prevention:** Always explicitly use strict permissions (`0o600` for files, `0o700` or `0o750` for directories) when creating sensitive files or directories to prevent credential or data leaks. Use `os.OpenFile` with explicit permissions instead of `os.Create`.
