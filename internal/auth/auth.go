@@ -211,7 +211,7 @@ func (client *KIClient) saveTokenCache(token *TokenResponse) error {
 	}
 
 	cacheDir := filepath.Dir(client.TokenCachePath)
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create token cache directory: %w", err)
 	}
 
