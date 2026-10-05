@@ -11,17 +11,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/fifi/internal/auth"
 	"github.com/fifi/internal/collector/premarket"
 	"github.com/fifi/internal/collector/pulse"
 	"github.com/fifi/internal/collector/snapshot"
 	"github.com/fifi/internal/domesticfutureoption"
 	"github.com/fifi/internal/domesticstock"
+	"github.com/fifi/internal/external/dataapi"
 	"github.com/fifi/internal/external/kofia"
 	"github.com/fifi/internal/external/naver"
 	"github.com/fifi/internal/external/yahoo"
 	"github.com/fifi/internal/market/facts"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -71,6 +72,8 @@ func runMarketSnapshot(args []string) error {
 
 	yahooClient, naverClient := newExternalClients(client)
 	kofiaClient := kofia.NewCachedClient(envDefault("KOFIA_CACHE_DIR", ".cache"), os.Getenv("USER_AGENT"))
+	outDir := envDefault("SNAPSHOT_OUTPUT_DIR", ".cache/snapshots")
+	opts.OutputDir = outDir
 	result := snapshot.Collect(ctx, snapshot.Deps{
 		DomesticStock:  domesticstock.NewService(client),
 		DomesticFuture: domesticfutureoption.NewService(client),
@@ -80,13 +83,9 @@ func runMarketSnapshot(args []string) error {
 		Facts:          facts.NewStore(os.Getenv("DATABASE_URL")),
 	}, opts)
 	// ── 이전 날짜 스냅샷 로드 (비교용) ──────────────────────────────────────────
-	outDir := envDefault("SNAPSHOT_OUTPUT_DIR", ".cache/snapshots")
-	date := time.Now().Format("20060102")
-	if opts.Date != "" {
-		normalized := strings.ReplaceAll(opts.Date, "-", "")
-		if len(normalized) == 8 {
-			date = normalized
-		}
+	date := result.BusinessDate
+	if result.SessionStatus == "INVALID_DATE" {
+		return result.Errors["date"]
 	}
 	var prev *snapshot.SnapshotJSON
 	if outDir != "" {
@@ -110,6 +109,12 @@ func runMarketSnapshot(args []string) error {
 		}
 		// Markdown 저장 (사람 읽기용)
 		mdPath := filepath.Join(outDir, fmt.Sprintf("market_snapshot.%s.md", date))
+		if raw, err := os.ReadFile(mdPath); err == nil {
+			archive := fmt.Sprintf("%s.previous.%d", mdPath, time.Now().UnixNano())
+			if err = os.WriteFile(archive, raw, 0600); err != nil {
+				return fmt.Errorf("preserve previous Markdown: %w", err)
+			}
+		}
 		if err := os.WriteFile(mdPath, []byte(output), 0o644); err == nil {
 			fmt.Fprintf(os.Stderr, "[snapshot] MD saved: %s\n", mdPath)
 		} else {
@@ -213,34 +218,35 @@ func runPremarket(args []string) error {
 		JSON:     *asJSON,
 	}
 
-	client, _ := newKISClient()
+	client, kisErr := newKISClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	var stockService premarket.DomesticStock
-	var futureService premarket.DomesticFuture
-	var yahooClient premarket.YahooQuotes
-	var naverClient premarket.NaverFinance
-
-	if client != nil {
-		_, _ = client.EnsureAuthToken(ctx)
-		stockService = domesticstock.NewService(client)
-		futureService = domesticfutureoption.NewService(client)
-		yC, nC := newExternalClients(client)
-		yahooClient = yC
-		naverClient = nC
+	// Public market sources remain usable when KIS credentials/auth are unavailable.
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	yahooClient := yahoo.NewClient(httpClient, yahoo.Config{UserAgent: os.Getenv("USER_AGENT")})
+	naverClient := naver.NewClient(httpClient, os.Getenv("USER_AGENT"))
+	if kisErr == nil {
+		if _, kisErr = client.EnsureAuthToken(ctx); kisErr == nil {
+			stockService = domesticstock.NewService(client)
+		}
 	}
 	kofiaClient := kofia.NewCachedClient(envDefault("KOFIA_CACHE_DIR", ".cache"), os.Getenv("USER_AGENT"))
 
 	result := premarket.Collect(ctx, premarket.Deps{
-		Stock:    stockService,
-		Future:   futureService,
-		Yahoo:    yahooClient,
-		Naver:    naverClient,
-		KOFIA:    kofiaClient,
-		Clock:    time.Now,
-		StoreDir: *storeDir,
+		Stock:       stockService,
+		Yahoo:       yahooClient,
+		Naver:       naverClient,
+		KOFIA:       kofiaClient,
+		Clock:       time.Now,
+		StoreDir:    *storeDir,
+		DailyPrices: dataapi.New(os.Getenv("DATA_API_KEY")),
+		Calendar:    &premarket.OfficialCalendar{Client: httpClient, UserAgent: os.Getenv("USER_AGENT")},
 	}, opts)
+	if kisErr != nil {
+		result.Errors["kis"] = kisErr.Error()
+	}
 
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)

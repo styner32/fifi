@@ -22,13 +22,26 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string, now t
 		return IndexLevel{}, fmt.Errorf("inquire-index-price (%s): %w", indexCode, err)
 	}
 
+	if resp == nil || !resp.IsOK() {
+		return IndexLevel{}, fmt.Errorf("index %s: invalid business response", indexCode)
+	}
 	row := resp.FirstRow("output")
 	if row == nil {
 		return IndexLevel{}, fmt.Errorf("inquire-index-price (%s): output 행 없음", indexCode)
 	}
 
+	for _, key := range []string{"bstp_nmix_prpr", "bstp_nmix_prdy_vrss", "bstp_nmix_prdy_ctrt"} {
+		if v, ok := parse.Num(row, key); !ok || !finite(v) {
+			return IndexLevel{}, fmt.Errorf("index %s: missing/invalid %s", indexCode, key)
+		}
+	}
+	var missing []string
 	get := func(key string) float64 {
-		v, _ := parse.Num(row, key)
+		v, ok := parse.Num(row, key)
+		if !ok || !finite(v) {
+			missing = append(missing, key)
+			return 0
+		}
 		return v
 	}
 	getInt := func(key string) int {
@@ -38,14 +51,20 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string, now t
 
 	price := get("bstp_nmix_prpr")
 	prdyVrss := get("bstp_nmix_prdy_vrss")
+	if sign := stringField(row, "prdy_vrss_sign"); sign == "4" || sign == "5" {
+		prdyVrss = -math.Abs(prdyVrss)
+	}
 	prevClose := price - prdyVrss
+	if price <= 0 || prevClose <= 0 {
+		return IndexLevel{}, fmt.Errorf("index %s: nonpositive price", indexCode)
+	}
 	changePct := 0.0
 	if prevClose != 0 {
 		changePct = prdyVrss / prevClose * 100
 	}
 
 	// 전일 대비 % 필드가 있으면 우선 사용
-	if v, ok := parse.Num(row, "bstp_nmix_prdy_ctrt"); ok && math.Abs(v) > 0.0001 {
+	if v, ok := parse.Num(row, "bstp_nmix_prdy_ctrt"); ok {
 		changePct = v
 	}
 
@@ -58,19 +77,10 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string, now t
 	lowerLimit := getInt("lslm_issu_cnt")
 	totalCount := upperLimit + advancers + unchanged + decliners + lowerLimit
 
-	// Time / Freshness calculation
-	nowKST := now.In(kstLocation)
-	kst330 := time.Date(nowKST.Year(), nowKST.Month(), nowKST.Day(), 15, 30, 0, 0, kstLocation)
-	var lastTS time.Time
-	if nowKST.After(kst330) {
-		lastTS = kst330
-	} else {
-		lastTS = now
-	}
-
+	lastTS := sourceTimestamp(row)
 	freshness, ageSecs, staleReason := DetermineFreshness("KRX", lastTS, now, false)
 
-	return IndexLevel{
+	level := IndexLevel{
 		Price:        price,
 		PrevClose:    prevClose,
 		ChangePct:    changePct,
@@ -84,11 +94,13 @@ func collectIndex(ctx context.Context, stock indexStock, indexCode string, now t
 		Decliners:    decliners,
 		LowerLimit:   lowerLimit,
 		TotalCount:   totalCount,
-		OK:           true,
-		LastTS:       lastTS,
-		FetchedAt:    now,
-		Freshness:    freshness,
-		AgeSeconds:   ageSecs,
-		StaleReason:  staleReason,
-	}, nil
+		OK:           true, BreadthOK: validFields(row, "ascn_issu_cnt", "down_issu_cnt", "stnr_issu_cnt", "uplm_issu_cnt", "lslm_issu_cnt"), Source: "KIS inquire-index-price",
+		LastTS:      lastTS,
+		FetchedAt:   now,
+		Freshness:   freshness,
+		AgeSeconds:  ageSecs,
+		StaleReason: staleReason,
+	}
+	level.MissingFields = missing
+	return level, nil
 }

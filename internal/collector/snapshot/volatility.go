@@ -2,7 +2,9 @@ package snapshot
 
 import (
 	"context"
-	"fmt"
+	"github.com/fifi/internal/kst"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/fifi/internal/market/facts"
@@ -10,6 +12,13 @@ import (
 
 // VolatilitySection은 VKOSPI/VIX 변동성 지표를 담습니다.
 type VolatilitySection struct {
+	Date           string        `json:"date"`
+	RetrievedAt    time.Time     `json:"retrieved_at"`
+	VIXObservedAt  time.Time     `json:"vix_observed_at"`
+	VIXStatus      string        `json:"vix_status"`
+	VKOSPIChangeOK bool          `json:"vkospi_change_ok"`
+	VIXChangeOK    bool          `json:"vix_change_ok"`
+	AverageDates   []string      `json:"average_dates"`
 	VKOSPI         float64       `json:"vkospi"`
 	VKOSPIChange   float64       `json:"vkospi_change"`
 	VKOSPI5DayAvg  float64       `json:"vkospi_5day_avg"`
@@ -25,151 +34,136 @@ type VolatilitySection struct {
 }
 
 // collectVolatility는 VKOSPI(KIS -> Naver -> facts.Store fallback)와 VIX(Yahoo Finance)를 조회합니다.
-func collectVolatility(ctx context.Context, stock DomesticStock, naverClient NaverFinance, yahoo YahooQuotes, factsStore facts.Store, indexChange float64, date string, opts Options) *VolatilitySection {
-	s := &VolatilitySection{Status: StatusValid, ObservedAt: time.Now()}
-
-	// VIX는 VKOSPI 성공 여부와 무관하게 항상 조회
-	if yahoo != nil {
-		if quotes, yErr := yahoo.GetQuotes(ctx, []string{"^VIX"}); yErr == nil {
-			if q, ok := quotes["^VIX"]; ok {
+func collectVolatility(ctx context.Context, stock DomesticStock, naverClient NaverFinance, yclient YahooQuotes, store facts.Store, indexChange float64, date string, opts Options) *VolatilitySection {
+	now := opts.AsOf
+	if now.IsZero() {
+		now = time.Now().In(kst.Location)
+	}
+	s := &VolatilitySection{Status: StatusUnavailable, RetrievedAt: now, VIXStatus: "UNAVAILABLE"}
+	if yclient != nil {
+		if qs, e := yclient.GetQuotes(ctx, []string{"^VIX"}); e == nil {
+			if q, ok := cleanQuotes(qs)["^VIX"]; ok {
 				s.VIX = q.Price
-				s.VIXChange = q.ChangePercent
+				s.VIXStatus = "TIMESTAMP_MISSING"
+				if q.MarketTimeUnix > 0 {
+					s.VIXObservedAt = time.Unix(q.MarketTimeUnix, 0)
+					s.VIXStatus = "RAW_OBSERVATION"
+				}
+				if ch := quoteChange(q); ch != nil {
+					s.VIXChange = *ch
+					s.VIXChangeOK = true
+				}
 			}
-		} else {
-			s.Reason = appendReason(s.Reason, "VIX: "+yErr.Error())
 		}
 	}
-
-	// facts.Resolve를 사용하여 VKOSPI 조회 및 store 저장 / fallback 수행
-	obs := facts.Resolve(ctx, factsStore, "vkospi.value", 7*24*time.Hour, func(fetchCtx context.Context) (facts.Observation, error) {
-		// 1. KIS 우선 조회
-		if stock != nil {
-			code, resolveErr := stock.ResolveVKOSPICode(fetchCtx, nil)
-			if resolveErr == nil {
-				resp, priceErr := stock.InquireVKOSPIPrice(fetchCtx, code)
-				if priceErr == nil && resp.IsOK() {
-					row := firstRow(resp, "output")
-					if row != nil {
-						if vk, vkOK := num(row, "bstp_nmix_prpr"); vkOK && vk >= 5 && vk <= 100 {
-							change, _ := num(row, "bstp_nmix_prdy_ctrt")
-							s.VKOSPIChange = change
-							return facts.Observation{
-								MetricID:        "vkospi.value",
-								BusinessDate:    date,
-								ObservedAt:      time.Now(),
-								Value:           &vk,
-								Source:          "KIS",
-								SourceField:     "bstp_nmix_prpr",
-								FreshnessStatus: string(StatusValid),
-								Raw:             row,
-							}, nil
+	dated := map[string]float64{}
+	conflict := map[string]bool{}
+	if stock != nil {
+		if code, e := stock.ResolveVKOSPICode(ctx, nil); e == nil {
+			if rs, e := stock.InquireVKOSPIDailyPrice(ctx, code, date); e == nil {
+				for _, r := range rs {
+					d := sourceDate(r)
+					v, ok := num(r, "bstp_nmix_prpr", "stck_clpr")
+					if d != "" && d <= date && ok && v > 0 {
+						if _, exists := dated[d]; exists {
+							conflict[d] = true
+						}
+						dated[d] = v
+					}
+				}
+			}
+			if date == now.Format("20060102") {
+				if resp, e := stock.InquireVKOSPIPrice(ctx, code); e == nil && resp.IsOK() {
+					r := firstRow(resp, "output")
+					if v, ok := num(r, "bstp_nmix_prpr"); ok && v > 0 {
+						s.VKOSPI = v
+						s.Source = "KIS"
+						s.ObservedAt = sourceTime(r)
+						s.Date = sourceDate(r)
+						s.Status = StatusTimestampMissing
+						if !s.ObservedAt.IsZero() {
+							s.Status = StatusPreliminary
+						}
+						if ch, ok := num(r, "bstp_nmix_prdy_ctrt"); ok {
+							s.VKOSPIChange = ch
+							s.VKOSPIChangeOK = true
 						}
 					}
 				}
 			}
 		}
-
-		// 2. Naver fallback
-		if naverClient != nil {
-			quote, err := naverClient.GetIndexQuote(fetchCtx, "VKOSPI")
-			if err == nil && quote != nil && quote.Price >= 5 && quote.Price <= 100 {
-				s.VKOSPIChange = quote.ChangePercent
-				return facts.Observation{
-					MetricID:        "vkospi.value",
-					BusinessDate:    date,
-					ObservedAt:      time.Now(),
-					Value:           &quote.Price,
-					Source:          "Naver",
-					FreshnessStatus: string(StatusValid),
-				}, nil
-			}
-			history, histErr := naverClient.GetIndexDailyHistory(fetchCtx, "VKOSPI", 10)
-			if histErr == nil && len(history) > 0 {
-				last := history[len(history)-1]
-				if last.Close >= 5 && last.Close <= 100 {
-					return facts.Observation{
-						MetricID:        "vkospi.value",
-						BusinessDate:    date,
-						ObservedAt:      time.Now(),
-						Value:           &last.Close,
-						Source:          "NaverHistory",
-						FreshnessStatus: string(StatusValid),
-					}, nil
+	}
+	// An explicitly dated close is preferred to an undated current quote.
+	if v, ok := dated[date]; ok && !conflict[date] {
+		s.VKOSPI = v
+		s.Date = date
+		s.Source = "KIS_DAILY"
+		s.Status = StatusPreliminary
+		s.ObservedAt = time.Time{}
+	}
+	if s.VKOSPI == 0 && naverClient != nil {
+		if hist, e := naverClient.GetIndexDailyHistory(ctx, "VKOSPI", 10); e == nil {
+			for _, r := range hist {
+				d := strings.ReplaceAll(r.Date, ".", "")
+				if d == date && finite(r.Close) && r.Close > 0 {
+					s.VKOSPI = r.Close
+					s.Date = d
+					s.Source = "NAVER_DAILY"
+					s.Status = StatusPreliminary
 				}
 			}
 		}
-
-		return facts.Observation{}, fmt.Errorf("all VKOSPI live sources failed")
-	})
-
-	if obs.Value != nil && *obs.Value > 0 {
-		s.VKOSPI = *obs.Value
-		s.Level = vkospiLevel(s.VKOSPI)
-		s.DecouplingFlag = isDecoupling(indexChange, s.VKOSPIChange)
-		s.Source = obs.Source
-		s.Status = QualityStatus(obs.FreshnessStatus)
-		if obs.FreshnessStatus == "PROVISIONAL_LAST_VALID" {
-			s.Reason = appendReason(s.Reason, obs.MissingReason)
-			s.ObservedAt = obs.ObservedAt
+	}
+	// Stored fallbacks retain their original date/time and never become current data.
+	if s.VKOSPI == 0 && store != nil {
+		if last, e := store.LatestValid(ctx, "vkospi.value", 7*24*time.Hour); e == nil && last != nil && last.Value != nil && finite(*last.Value) && *last.Value > 0 && last.BusinessDate <= date && !last.ObservedAt.IsZero() && !last.ObservedAt.After(now) {
+			s.VKOSPI = *last.Value
+			s.Date = last.BusinessDate
+			s.ObservedAt = last.ObservedAt
+			s.Source = last.Source
+			s.Status = StatusProvisionalLastValid
+			s.Reason = "last valid context only"
 		}
-
-		// 5일 평균 조회
-		if stock != nil {
-			fromDate := time.Now().AddDate(0, 0, -14).Format("20060102")
-			if code, err := stock.ResolveVKOSPICode(ctx, nil); err == nil {
-				if history, histErr := stock.InquireVKOSPIDailyPrice(ctx, code, fromDate); histErr == nil {
-					sum, count := 0.0, 0
-					for _, historyRow := range history {
-						if closeValue, ok := num(historyRow, "bstp_nmix_prpr", "stck_clpr"); ok && closeValue >= 5 && closeValue <= 100 {
-							sum += closeValue
-							count++
-							if count == 5 {
-								break
-							}
-						}
-					}
-					if count > 0 {
-						s.VKOSPI5DayAvg = sum / float64(count)
-					}
-				}
+	}
+	var ds []string
+	for d := range dated {
+		if !conflict[d] {
+			ds = append(ds, d)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ds)))
+	// Before the close, today's daily bar is not a completed daily observation.
+	completed := []string{}
+	for _, d := range ds {
+		if d == date && date == now.Format("20060102") && now.Hour()*60+now.Minute() < 930 {
+			continue
+		}
+		completed = append(completed, d)
+	}
+	if len(completed) >= 5 {
+		sum := 0.0
+		for _, d := range completed[:5] {
+			sum += dated[d]
+		}
+		s.VKOSPI5DayAvg = sum / 5
+		s.AverageDates = completed[:5]
+	}
+	if s.Source == "KIS_DAILY" {
+		for _, d := range ds {
+			if d < date {
+				s.VKOSPIChange = (s.VKOSPI/dated[d] - 1) * 100
+				s.VKOSPIChangeOK = true
+				break
 			}
 		}
-
-		if s.VIX > 0 {
-			ratio := s.VKOSPI / s.VIX
-			if ratio > 3.5 || ratio < 0.28 {
-				s.QualityFlags = append(s.QualityFlags, "INCONSISTENT_WITH_RELATED_METRIC")
-			}
-		}
-		return s
 	}
-
-	// ── fallback to local snapshot file if facts.Store was empty ──
-	outDir := opts.OutputDir
-	if outDir == "" {
-		outDir = ".cache/snapshots"
-	}
-	if todaySnap, err := LoadSnapshotForDate(outDir, date); err == nil && todaySnap != nil && todaySnap.Volatility != nil && todaySnap.Volatility.VKOSPI > 0 {
-		s.VKOSPI = todaySnap.Volatility.VKOSPI
-		s.VKOSPIChange = todaySnap.Volatility.VKOSPIChange
-		s.VKOSPI5DayAvg = todaySnap.Volatility.VKOSPI5DayAvg
+	if s.VKOSPI > 0 {
 		s.Level = vkospiLevel(s.VKOSPI)
-		s.DecouplingFlag = isDecoupling(indexChange, s.VKOSPIChange)
-		s.Source = todaySnap.Volatility.Source
-		s.Status = StatusProvisionalLastValid
-		s.Reason = appendReason(s.Reason, "VKOSPI collection failed; fallback to last successful snapshot")
-		return s
+	} else {
+		s.Reason = "valid VKOSPI observation unavailable"
 	}
-
-	s.Status = StatusUnavailable
-	s.QualityFlags = []string{"VKOSPI_UNAVAILABLE"}
-	if obs.MissingReason != "" {
-		s.Reason = appendReason(s.Reason, obs.MissingReason)
-	}
-
 	return s
 }
-
 
 func vkospiLevel(v float64) string {
 	switch {

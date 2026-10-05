@@ -32,7 +32,7 @@ type vkospiStock interface {
 }
 
 type contributionStock interface {
-	KOSPIMarketCapSummary(context.Context, string) (*domesticstock.KOSPIMarketCapSummary, error)
+	KOSPIIndexMarketCapSummary(context.Context, string) (*domesticstock.KOSPIMarketCapSummary, error)
 	InquirePrice(context.Context, string) (*auth.RESTResponse, error)
 }
 
@@ -40,6 +40,9 @@ func resolveBusinessDate(ctx context.Context, stock marketTimeStock, fallback st
 	resp, err := stock.MarketTime(ctx)
 	if err != nil {
 		return fallback, err
+	}
+	if resp == nil || !resp.IsOK() {
+		return fallback, fmt.Errorf("market-time invalid business response")
 	}
 	row := resp.FirstRow("output1")
 	if row == nil {
@@ -93,6 +96,9 @@ func collectProgramTrade(ctx context.Context, stock programTradeStock, marketCla
 	if err != nil {
 		return ProgramTradeSnapshot{}, err
 	}
+	if resp == nil || !resp.IsOK() {
+		return ProgramTradeSnapshot{}, fmt.Errorf("program: invalid business response")
+	}
 	rows := resp.Rows("output")
 	if len(rows) == 0 {
 		return ProgramTradeSnapshot{}, fmt.Errorf("comp-program-trade-today (%s): output 행 없음", marketClass)
@@ -108,7 +114,7 @@ func collectProgramTrade(ctx context.Context, stock programTradeStock, marketCla
 	}
 	get := func(key string) (float64, error) {
 		v, ok := parse.Num(latest, key)
-		if !ok {
+		if !ok || !finite(v) {
 			return 0, fmt.Errorf("%s 필드 없음", key)
 		}
 		return v / millionToEok, nil
@@ -126,13 +132,9 @@ func collectProgramTrade(ctx context.Context, stock programTradeStock, marketCla
 		return ProgramTradeSnapshot{}, err
 	}
 	asOf := latestHour
-	// KIS는 장 마감 후에도 15:30~17시대 행을 같은 종가 데이터로 반복한다.
-	if asOf >= "153000" {
-		asOf = "close"
-	}
 	return ProgramTradeSnapshot{
 		Arbitrage: arbitrage, NonArbitrage: nonArbitrage, Total: total,
-		AsOf: asOf, OK: true,
+		AsOf: asOf, OK: true, LastTS: sourceTimestamp(latest),
 	}, nil
 }
 
@@ -158,6 +160,9 @@ func collectIndexFuture(ctx context.Context, future DomesticFuture, businessDate
 	if err != nil {
 		return IndexFutureSnapshot{}, err
 	}
+	if resp == nil || !resp.IsOK() {
+		return IndexFutureSnapshot{}, fmt.Errorf("future: invalid business response")
+	}
 	futureRow := resp.FirstRow("output1", "output")
 	spotRow := resp.FirstRow("output3")
 	if futureRow == nil || spotRow == nil {
@@ -167,31 +172,39 @@ func collectIndexFuture(ctx context.Context, future DomesticFuture, businessDate
 	if !ok {
 		return IndexFutureSnapshot{}, fmt.Errorf("index future %s: futs_prpr 없음", code)
 	}
+	if !validFields(futureRow, "futs_prpr", "futs_prdy_clpr", "futs_prdy_ctrt") || price <= 0 {
+		return IndexFutureSnapshot{}, fmt.Errorf("future: invalid price/change")
+	}
 	prevClose, _ := parse.Num(futureRow, "futs_prdy_clpr", "futs_sdpr")
 	changePct, _ := parse.Num(futureRow, "futs_prdy_ctrt")
 	spotPrice, ok := parse.Num(spotRow, "bstp_nmix_prpr")
 	if !ok {
 		return IndexFutureSnapshot{}, fmt.Errorf("index future %s: output3 spot 없음", code)
 	}
+	expectedSpot := "2001"
+	if market == "KOSDAQ150" {
+		expectedSpot = "3003"
+	}
+	spotOK := stringField(spotRow, "bstp_cls_code") == expectedSpot && validFields(spotRow, "bstp_nmix_prpr", "bstp_nmix_prdy_ctrt") && spotPrice > 0
 	spotChangePct, _ := parse.Num(spotRow, "bstp_nmix_prdy_ctrt")
 	computedBasis := price - spotPrice
 	marketBasis, marketBasisOK := parse.Num(futureRow, "mrkt_basis")
-	basisMatch := !marketBasisOK || math.Abs(computedBasis-marketBasis) <= 0.05
+	basisMatch := spotOK && marketBasisOK && math.Abs(computedBasis-marketBasis) <= 0.05
 
-	lastTS := CapTimeAt1530(now)
+	lastTS := sourceTimestamp(futureRow)
 	freshness, ageSecs, staleReason := DetermineFreshness("KRX", lastTS, now, false)
 
 	return IndexFutureSnapshot{
 		Code: code, Name: name, Price: price, PrevClose: prevClose, ChangePct: changePct,
 		SpotPrice: spotPrice, SpotChangePct: spotChangePct, Basis: computedBasis, RawSpread: computedBasis,
-		MarketBasis: marketBasis, BasisMatch: basisMatch, OK: true,
+		MarketBasis: marketBasis, MarketBasisOK: marketBasisOK, BasisMatch: basisMatch, OK: true, SpotOK: spotOK, SpotCode: stringField(spotRow, "bstp_cls_code"), Alignment: "ALIGNMENT_UNVERIFIED",
 		LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
 	}, nil
 }
 
 func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFinance, now time.Time) (VolatilitySnapshot, error) {
 	var lastErr error
-	lastTS := CapTimeAt1530(now)
+	lastTS := time.Time{}
 	freshness, ageSecs, staleReason := DetermineFreshness("KRX", lastTS, now, false)
 
 	if stock != nil {
@@ -200,9 +213,11 @@ func collectVKOSPI(ctx context.Context, stock vkospiStock, naverClient NaverFina
 			resp, err := stock.InquireVKOSPIPrice(ctx, code)
 			if err == nil && resp != nil && resp.IsOK() {
 				if row := resp.FirstRow("output"); row != nil {
+					lastTS = sourceTimestamp(row)
+					freshness, ageSecs, staleReason = DetermineFreshness("KRX", lastTS, now, false)
 					value, valueOK := parse.Num(row, "bstp_nmix_prpr")
-					change, _ := parse.Num(row, "bstp_nmix_prdy_ctrt")
-					if valueOK && value >= 5 && value <= 100 {
+					change, changeOK := parse.Num(row, "bstp_nmix_prdy_ctrt")
+					if valueOK && changeOK && value >= 5 && value <= 100 {
 						return VolatilitySnapshot{
 							Code: code, Value: value, ChangePct: change, Source: "KIS", OK: true,
 							LastTS: lastTS, FetchedAt: now, Freshness: freshness, AgeSeconds: ageSecs, StaleReason: staleReason,
@@ -237,14 +252,37 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 	if !idx.OK || idx.PrevClose <= 0 {
 		return nil, fmt.Errorf("KOSPI 전일 종가 없음")
 	}
-	summary, err := stock.KOSPIMarketCapSummary(ctx, businessDate)
+	summary, err := stock.KOSPIIndexMarketCapSummary(ctx, businessDate)
 	if err != nil {
 		return nil, err
 	}
-	if summary.TotalMarketCap <= 0 {
+	if summary == nil || summary.TotalMarketCap <= 0 {
 		return nil, fmt.Errorf("KOSPI 총 시가총액 없음")
 	}
+	if summary.Universe != domesticstock.KOSPIIndexMasterUniverse || summary.BusinessDate != businessDate {
+		return nil, fmt.Errorf("index universe/date unverified")
+	}
+	total := 0.0
+	seen := map[string]bool{}
+	for _, item := range summary.Constituents {
+		if !item.KOSPIIndexMember || item.PreferredClass != "0" || item.MarketCap <= 0 || !finite(item.MarketCap) || seen[item.Code] {
+			return nil, fmt.Errorf("invalid index constituent: %s", item.Code)
+		}
+		seen[item.Code] = true
+		total += item.MarketCap
+	}
+	if !finite(summary.TotalMarketCap) || math.Abs(total-summary.TotalMarketCap) > 0.01 {
+		return nil, fmt.Errorf("index universe denominator mismatch")
+	}
+	items := append([]domesticstock.KOSPIMarketCapConstituent(nil), summary.Constituents...)
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].MarketCap == items[j].MarketCap {
+			return items[i].Code < items[j].Code
+		}
+		return items[i].MarketCap > items[j].MarketCap
+	})
 	limit := 10
+
 	if len(summary.Constituents) < limit {
 		limit = len(summary.Constituents)
 	}
@@ -253,11 +291,11 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 	var mu sync.Mutex
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(4)
-	for _, item := range summary.Constituents[:limit] {
+	for _, item := range items[:limit] {
 		item := item
 		g.Go(func() error {
 			resp, reqErr := stock.InquirePrice(gctx, item.Code)
-			if reqErr != nil {
+			if reqErr != nil || resp == nil || !resp.IsOK() {
 				mu.Lock()
 				failures = append(failures, item.Code)
 				mu.Unlock()
@@ -265,7 +303,7 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 			}
 			row := resp.FirstRow("output")
 			changePct, ok := parse.Num(row, "prdy_ctrt")
-			if row == nil || !ok {
+			if row == nil || !ok || !finite(changePct) {
 				mu.Lock()
 				failures = append(failures, item.Code)
 				mu.Unlock()
@@ -275,7 +313,7 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 			contribution := IndexContribution{
 				Code: item.Code, Name: item.Name, MarketCap: item.MarketCap,
 				WeightPct: weight * 100, ChangePct: changePct,
-				PointImpact: idx.PrevClose * weight * changePct / 100,
+				PointImpact: nil, Status: "NOT_EVALUATED", WeightStatus: summary.WeightStatus, Universe: summary.Universe, MasterDate: summary.BusinessDate, Denominator: summary.TotalMarketCap, UniverseCount: len(summary.Constituents), SourcePath: summary.SourcePath,
 			}
 			mu.Lock()
 			out = append(out, contribution)
@@ -285,53 +323,31 @@ func collectContributions(ctx context.Context, stock contributionStock, business
 	}
 	_ = g.Wait()
 	sort.SliceStable(out, func(i, j int) bool {
-		return math.Abs(out[i].PointImpact) > math.Abs(out[j].PointImpact)
+		if out[i].MarketCap == out[j].MarketCap {
+			return out[i].Code < out[j].Code
+		}
+		return out[i].MarketCap > out[j].MarketCap
 	})
 	if len(out) == 0 {
 		return nil, fmt.Errorf("KOSPI 상위종목 시세 조회 실패: %s", strings.Join(failures, ","))
 	}
 	if len(failures) > 0 {
-		return out, fmt.Errorf("일부 종목 시세 조회 실패: %s", strings.Join(failures, ","))
+		return nil, fmt.Errorf("상위종목 시세 일부 누락 (부분합 미발행): %s", strings.Join(failures, ","))
 	}
 	return out, nil
 }
 
 type OfficialEvent struct {
-	Market      string `json:"market"`
-	Device      string `json:"device"`
-	TriggeredAt string `json:"triggered_at"`
+	BusinessDate string `json:"business_date"`
+	Source       string `json:"source"`
+	ReleasedAt   string `json:"released_at,omitempty"`
+	Market       string `json:"market"`
+	Device       string `json:"device"`
+	TriggeredAt  string `json:"triggered_at"`
 }
 
 func LoadOfficialEvents(date string) []OfficialEvent {
 	var events []OfficialEvent
-
-	// Check env variables first (easy for tests and manual runs)
-	for _, envKey := range []string{
-		"OFFICIAL_EVENT_KOSPI_SIDECAR_SELL",
-		"OFFICIAL_EVENT_KOSPI_SIDECAR_BUY",
-		"OFFICIAL_EVENT_KOSDAQ_SIDECAR_SELL",
-		"OFFICIAL_EVENT_KOSDAQ_SIDECAR_BUY",
-		"OFFICIAL_EVENT_KOSPI_CB1",
-		"OFFICIAL_EVENT_KOSPI_CB2",
-		"OFFICIAL_EVENT_KOSPI_CB3",
-		"OFFICIAL_EVENT_KOSDAQ_CB1",
-		"OFFICIAL_EVENT_KOSDAQ_CB2",
-		"OFFICIAL_EVENT_KOSDAQ_CB3",
-	} {
-		val := os.Getenv(envKey)
-		if val != "" {
-			parts := strings.Split(envKey, "_")
-			if len(parts) >= 4 {
-				market := parts[2]
-				device := strings.Join(parts[3:], "_")
-				events = append(events, OfficialEvent{
-					Market:      market,
-					Device:      device,
-					TriggeredAt: val,
-				})
-			}
-		}
-	}
 
 	// Check JSON file
 	filePath := os.Getenv("OFFICIAL_EVENTS_FILE")
@@ -351,21 +367,22 @@ func LoadOfficialEvents(date string) []OfficialEvent {
 		}
 	}
 
-	return events
+	valid := events[:0]
+	for _, ev := range events {
+		if ev.BusinessDate == date && strings.HasPrefix(ev.Source, "https://") {
+			valid = append(valid, ev)
+		}
+	}
+	return valid
 }
 
-func parseHHMMSS(timeStr string, base time.Time) (time.Time, error) {
-	timeStr = strings.TrimSpace(timeStr)
-	var hour, min, sec int
-	n, err := fmt.Sscanf(timeStr, "%d:%d:%d", &hour, &min, &sec)
-	if err != nil || n < 2 {
-		n2, err2 := fmt.Sscanf(timeStr, "%d:%d", &hour, &min)
-		if err2 != nil || n2 < 2 {
-			return time.Time{}, fmt.Errorf("invalid time format: %s", timeStr)
+func parseHHMMSS(s string, base time.Time) (time.Time, error) {
+	for _, layout := range []string{"15:04:05", "15:04"} {
+		if t, e := time.Parse(layout, s); e == nil {
+			return time.Date(base.Year(), base.Month(), base.Day(), t.Hour(), t.Minute(), t.Second(), 0, base.Location()), nil
 		}
-		sec = 0
 	}
-	return time.Date(base.Year(), base.Month(), base.Day(), hour, min, sec, 0, base.Location()), nil
+	return time.Time{}, fmt.Errorf("invalid event time")
 }
 
 func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k200, kq150 IndexFutureSnapshot, records []PulseRecord) MarketSafety {
@@ -373,35 +390,31 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 
 	officialEvents := LoadOfficialEvents(date)
 
-	findTriggerTimeInHistory := func(device string, market string) (bool, string) {
-		for _, r := range records {
-			for _, dev := range r.Safety.Devices {
-				if dev.Market == market && dev.Device == device {
-					if dev.State == "TRIGGERED" || dev.State == "RELEASED" || dev.State == "EXPIRED_FOR_DAY" || dev.State == "CONDITION_OBSERVED" {
-						if dev.TriggeredAt != "" {
-							return true, dev.TriggeredAt
-						} else if dev.ConditionObservedAt != "" {
-							return true, dev.ConditionObservedAt
-						}
-					}
-				}
-			}
-		}
-		return false, ""
-	}
-
 	getTriggerTime := func(market, device string) (bool, string, string) {
 		for _, ev := range officialEvents {
 			if ev.Market == market && ev.Device == device {
-				return true, ev.TriggeredAt, "OFFICIAL"
+				t, e := parseHHMMSS(ev.TriggeredAt, now.In(kstLocation))
+				if e == nil && !t.After(now) {
+					return true, ev.TriggeredAt, "OFFICIAL"
+				}
 			}
-		}
-		if ok, tStr := findTriggerTimeInHistory(device, market); ok {
-			return true, tStr, "INFERRED"
 		}
 		return false, "", "UNCONFIRMED"
 	}
-
+	applyRelease := func(d *SafetyDeviceStatus) {
+		d.State = "TRIGGERED"
+		d.ReleasedAt = ""
+		for _, ev := range officialEvents {
+			if ev.Market == d.Market && ev.Device == d.Device && ev.ReleasedAt != "" {
+				t, e := parseHHMMSS(ev.ReleasedAt, now.In(kstLocation))
+				trigger, te := parseHHMMSS(d.TriggeredAt, now.In(kstLocation))
+				if e == nil && te == nil && t.After(trigger) && !t.After(now) && d.Device != "CB3" {
+					d.State = "RELEASED"
+					d.ReleasedAt = ev.ReleasedAt
+				}
+			}
+		}
+	}
 	nowKST := now.In(kstLocation)
 	hm := nowKST.Hour()*100 + nowKST.Minute()
 
@@ -456,7 +469,7 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 		{"KOSPI", k200, 5.0, 0.0, kospiSidecarTriggered, kospiSidecarTriggerTime, kospiSidecarVer},
 		{"KOSDAQ", kq150, 6.0, 3.0, kosdaqSidecarTriggered, kosdaqSidecarTriggerTime, kosdaqSidecarVer},
 	} {
-		if !item.f.OK {
+		if !item.f.OK || (item.spotTh > 0 && !item.f.SpotOK) {
 			continue
 		}
 
@@ -491,17 +504,7 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 			if hasTriggeredThis {
 				devStatus.EligibleNow = false
 				devStatus.EligibilityReason = "금일 이미 발동됨 (재발동 불가)"
-				tTrig, err := parseHHMMSS(devStatus.TriggeredAt, nowKST)
-				if err == nil {
-					devStatus.ReleasedAt = tTrig.Add(5 * time.Minute).Format("15:04:05")
-					if nowKST.Before(tTrig.Add(5 * time.Minute)) {
-						devStatus.State = "TRIGGERED"
-					} else {
-						devStatus.State = "RELEASED"
-					}
-				} else {
-					devStatus.State = "RELEASED"
-				}
+				applyRelease(&devStatus)
 			} else {
 				timeEligible := hm >= 905 && hm <= 1450
 				noPriorTrigger := !item.triggered
@@ -575,6 +578,15 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 				}
 			}
 
+			if devStatus.Verification != "OFFICIAL" && !usableFreshness(item.f.Freshness) {
+				devStatus.State = "NOT_EVALUATED"
+				devStatus.EligibleNow = false
+				devStatus.ConditionObservedAt = ""
+				devStatus.ThresholdDistancePct = nil
+				devStatus.FuturesGapPct = nil
+				devStatus.SpotGapPct = nil
+				devStatus.EligibilityReason = "선물 관측 시각 미확인 또는 지연 초과"
+			}
 			s.Devices = append(s.Devices, devStatus)
 		}
 	}
@@ -612,17 +624,7 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 				devStatus.Verification = cbVerifications[item.market][step.device]
 				devStatus.EligibleNow = false
 				devStatus.EligibilityReason = "금일 이미 발동됨"
-				tTrig, err := parseHHMMSS(devStatus.TriggeredAt, nowKST)
-				if err == nil {
-					devStatus.ReleasedAt = tTrig.Add(20 * time.Minute).Format("15:04:05")
-					if nowKST.Before(tTrig.Add(20 * time.Minute)) {
-						devStatus.State = "TRIGGERED"
-					} else {
-						devStatus.State = "RELEASED"
-					}
-				} else {
-					devStatus.State = "RELEASED"
-				}
+				applyRelease(&devStatus)
 			} else {
 				timeEligible := false
 				if step.device == "CB3" {
@@ -637,7 +639,7 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 					if !prevTriggered {
 						for _, prevDev := range s.Devices {
 							if prevDev.Market == item.market && prevDev.Device == step.prevCb {
-								if prevDev.State == "CONDITION_OBSERVED" || prevDev.State == "TRIGGERED" || prevDev.State == "RELEASED" {
+								if prevDev.State == "TRIGGERED" || prevDev.State == "RELEASED" {
 									prevTriggered = true
 									break
 								}
@@ -681,6 +683,13 @@ func buildMarketSafety(now time.Time, date string, kospi, kosdaq IndexLevel, k20
 				}
 			}
 
+			if devStatus.Verification != "OFFICIAL" && !usableFreshness(item.idx.Freshness) {
+				devStatus.State = "NOT_EVALUATED"
+				devStatus.EligibleNow = false
+				devStatus.ConditionObservedAt = ""
+				devStatus.ThresholdDistancePct = nil
+				devStatus.EligibilityReason = "지수 관측 시각 미확인 또는 지연 초과"
+			}
 			s.Devices = append(s.Devices, devStatus)
 		}
 	}
@@ -697,7 +706,7 @@ func buildLegacyCircuitBreakers(kospi, kosdaq IndexLevel) []CircuitBreakerStatus
 		name string
 		idx  IndexLevel
 	}{{"KOSPI", kospi}, {"KOSDAQ", kosdaq}} {
-		if !item.idx.OK || item.idx.PrevClose <= 0 {
+		if !item.idx.OK || item.idx.PrevClose <= 0 || item.idx.Low <= 0 {
 			continue
 		}
 		lowPct := (item.idx.Low - item.idx.PrevClose) / item.idx.PrevClose * 100
@@ -705,13 +714,13 @@ func buildLegacyCircuitBreakers(kospi, kosdaq IndexLevel) []CircuitBreakerStatus
 		for _, threshold := range []float64{8, 15, 20} {
 			currentGap, currentReached := downsideGap(item.idx.ChangePct, threshold)
 			lowGap, lowReached := downsideGap(lowPct, threshold)
-			
+
 			triggerIndexLevel := item.idx.PrevClose * (1.0 - threshold/100.0)
 			drawdownRequiredPct := 0.0
 			if item.idx.Price > 0 {
 				drawdownRequiredPct = (triggerIndexLevel - item.idx.Price) / item.idx.Price * 100.0
 			}
-			
+
 			cb.Levels = append(cb.Levels, ThresholdStatus{
 				ThresholdPct: threshold, CurrentGapPct: currentGap, LowGapPct: lowGap,
 				CurrentReached: currentReached, LowReached: lowReached,
@@ -728,7 +737,7 @@ func buildLegacySidecars(k200, kq150 IndexFutureSnapshot, records []PulseRecord)
 	if k200.OK {
 		scs = append(scs, buildSidecar("KOSPI", k200, 5, 0, records))
 	}
-	if kq150.OK {
+	if kq150.OK && kq150.SpotOK {
 		scs = append(scs, buildSidecar("KOSDAQ", kq150, 6, 3, records))
 	}
 	return scs
@@ -758,64 +767,15 @@ func buildSidecar(market string, f IndexFutureSnapshot, futuresThreshold, spotTh
 	}
 	thresholdReached := futuresGap == 0 && spotReached
 
-	triggeredToday := false
-	triggeredDir := ""
-
-	checkTrigger := func(chg, spotChg float64, ok bool) (bool, string) {
-		if !ok {
-			return false, ""
-		}
-		if math.Abs(chg) >= futuresThreshold {
-			if spotThreshold > 0 {
-				if math.Abs(spotChg) >= spotThreshold && sign(chg) == sign(spotChg) {
-					d := "상승"
-					if chg < 0 {
-						d = "하락"
-					}
-					return true, d
-				}
-			} else {
-				d := "상승"
-				if chg < 0 {
-					d = "하락"
-				}
-				return true, d
-			}
-		}
-		return false, ""
-	}
-
-	for _, r := range records {
-		var histF IndexFutureSnapshot
-		if market == "KOSPI" {
-			histF = r.KOSPI200Future
-		} else {
-			histF = r.KOSDAQ150Future
-		}
-		if trig, d := checkTrigger(histF.ChangePct, histF.SpotChangePct, histF.OK); trig {
-			triggeredToday = true
-			triggeredDir = d
-			break
-		}
-	}
-
-	if !triggeredToday {
-		if trig, d := checkTrigger(f.ChangePct, f.SpotChangePct, f.OK); trig {
-			triggeredToday = true
-			triggeredDir = d
-		}
-	}
-
-	status := "NOT_TRIGGERED"
-	if triggeredToday {
+	status := "NOT_EVALUATED"
+	if f.OK && usableFreshness(f.Freshness) && (spotThreshold == 0 || f.SpotOK) {
+		status = "CONDITION_NOT_OBSERVED"
 		if thresholdReached {
-			status = "TRIGGERED"
-		} else {
-			status = "ALREADY_TRIGGERED_TODAY"
+			status = "CONDITION_OBSERVED"
 		}
-		direction = triggeredDir
+	} else {
+		thresholdReached = false
 	}
-
 	return SidecarStatus{
 		Market: market, FuturesCode: f.Code, Direction: direction,
 		FuturesChangePct: f.ChangePct, SpotChangePct: f.SpotChangePct,
@@ -823,12 +783,11 @@ func buildSidecar(market string, f IndexFutureSnapshot, futuresThreshold, spotTh
 		FuturesGapPct: futuresGap, SpotGapPct: spotGap,
 		ThresholdReached:    thresholdReached,
 		ActivationConfirmed: false, OK: true,
-		TriggeredToday:      triggeredToday,
-		TriggeredDirection:  triggeredDir,
-		Status:              status,
+		TriggeredToday:     false,
+		TriggeredDirection: "",
+		Status:             status,
 	}
 }
-
 
 func computeProgramDelta(records []PulseRecord, now time.Time, cur ProgramTradeSnapshot, market string) *ProgramTradeDelta {
 	if !cur.OK {
@@ -842,7 +801,7 @@ func computeProgramDelta(records []PulseRecord, now time.Time, cur ProgramTradeS
 	if market == "kosdaq" {
 		previous = prev.KOSDAQProgram
 	}
-	if !previous.OK {
+	if !previous.OK || cur.LastTS.IsZero() || !sameDay(cur.LastTS, previous.LastTS) || !previous.LastTS.Before(cur.LastTS) {
 		return nil
 	}
 	return &ProgramTradeDelta{
@@ -858,7 +817,7 @@ func computeBasisDelta(records []PulseRecord, now time.Time, cur IndexFutureSnap
 		return nil
 	}
 	prev := LoadNearest(records, now.Add(-time.Duration(hours)*time.Hour))
-	if prev == nil || !prev.KOSPI200Future.OK {
+	if !validRecordTime(prev, now) || !prev.KOSPI200Future.OK || cur.Code != prev.KOSPI200Future.Code || cur.Alignment != "ALIGNED" || prev.KOSPI200Future.Alignment != "ALIGNED" {
 		return nil
 	}
 	return &BasisDelta{RefTS: prev.TS, Elapsed: now.Sub(prev.TS).Minutes(), Value: cur.Basis - prev.KOSPI200Future.Basis}

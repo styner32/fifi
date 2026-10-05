@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/fifi/internal/fileio"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,13 +41,16 @@ func (s *Service) loadKOSPIMaster(ctx context.Context, businessDate string) ([]k
 	}
 
 	jsonPath := resolveKOSPIMasterJSONPath(cachePath)
-	err = mstcache.EnsureJSONSidecar(cachePath, jsonPath, func() (any, error) {
-		return kospiMasterJSONCache{
+	build := func() (any, error) {
+		return kospiMasterJSONCache{SchemaVersion: 2,
 			BusinessDate: strings.TrimSpace(businessDate),
 			GeneratedAt:  time.Now().Format(time.RFC3339),
 			SourcePath:   cachePath,
 			RecordCount:  len(records),
 			Fields: []kospiMasterJSONField{
+				{Name: "kospi_index_member", Description: "KIS KOSPI여부", Source: "field[58]"},
+				{Name: "preferred_class", Description: "우선주 구분: 0 보통주, 1/2 우선주", Source: "field[54]"},
+				{Name: "security_group", Description: "증권 그룹 구분", Source: "field[0]"},
 				{Name: "code", Description: "6자리 단축 종목코드", Source: "part1[0:9]"},
 				{Name: "name", Description: "한글 종목명", Source: "part1[21:]"},
 				{Name: "market_cap", Description: "전일기준 시가총액(억)", Source: "field[65]"},
@@ -55,7 +60,17 @@ func (s *Service) loadKOSPIMaster(ctx context.Context, businessDate string) ([]k
 			},
 			Records: records,
 		}, nil
-	})
+	}
+	var cached kospiMasterJSONCache
+	if data, readErr := os.ReadFile(jsonPath); readErr == nil && json.Unmarshal(data, &cached) == nil && cached.SchemaVersion < 2 {
+		payload, buildErr := build()
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		err = fileio.WriteJSONAtomic(jsonPath, payload)
+	} else {
+		err = mstcache.EnsureJSONSidecar(cachePath, jsonPath, build)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -104,8 +119,6 @@ func resolveKOSPIMasterJSONPath(cachePath string) string {
 
 	return strings.TrimSuffix(cachePath, ext) + ".json"
 }
-
-
 
 func parseKOSPIMaster(raw []byte) ([]kospiMasterRecord, error) {
 	reader := transform.NewReader(bytes.NewReader(raw), korean.EUCKR.NewDecoder())
@@ -156,22 +169,24 @@ func parseKOSPIMasterLine(line string) (kospiMasterRecord, bool, error) {
 		return kospiMasterRecord{}, false, fmt.Errorf("unexpected KOSPI master field count: %d", len(fields))
 	}
 
-	isCommon := strings.ToUpper(strings.TrimSpace(fields[58])) == "Y"
+	isIndexMember := strings.ToUpper(strings.TrimSpace(fields[58])) == "Y"
 	pref := strings.TrimSpace(fields[54])
 	isPref := pref != "" && pref != "0" && strings.ToUpper(pref) != "N"
-	if !isCommon && !isPref {
+	if !isIndexMember && !isPref {
 		return kospiMasterRecord{}, false, nil
 	}
 
+	record := kospiMasterRecord{Code: normalizeShortCode(code), Name: name, KOSPIIndexMember: isIndexMember, PreferredClass: pref, SecurityGroup: strings.TrimSpace(fields[0])}
 	marketCap, ok := parseFloat(fields[65])
 	if !ok || marketCap <= 0 {
-		return kospiMasterRecord{}, false, nil
+		return record, false, nil
 	}
 
 	netIncome, _ := parseFloat(fields[62])
 	roe, _ := parseFloat(fields[63])
 
 	return kospiMasterRecord{
+		KOSPIIndexMember: isIndexMember, PreferredClass: pref, SecurityGroup: record.SecurityGroup,
 		Code:      normalizeShortCode(code),
 		Name:      name,
 		MarketCap: marketCap,
@@ -202,5 +217,3 @@ func normalizeShortCode(code string) string {
 	}
 	return code
 }
-
-

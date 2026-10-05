@@ -3,14 +3,18 @@ package snapshot
 import (
 	"context"
 	"fmt"
+	"github.com/fifi/internal/kst"
 	"math"
 	"strings"
+	"time"
 )
 
 type ImpactSection struct {
+	FuturesObservedAt time.Time `json:"futures_observed_at"`
+	FuturesStatus     string    `json:"futures_status"`
 	// 거래대금 대비 외인 순수급 강도 (주요 지표)
 	ForeignNetFlowToTradingValue  *float64 `json:"foreign_net_flow_to_trading_value"`
-	ForeignSellTradingValueLabel  string   `json:"foreign_sell_trading_value_label"` // "BELOW_CUSTOM_ALERT_THRESHOLD"/"주의"/"위험"
+	ForeignSellTradingValueLabel  string   `json:"foreign_sell_trading_value_label"`  // "BELOW_CUSTOM_ALERT_THRESHOLD"/"주의"/"위험"
 	ForeignSellTradingValuePolicy string   `json:"foreign_sell_trading_value_policy"` // "abs(ratio)<10%"
 	ForeignSellTradingValueReason string   `json:"foreign_sell_trading_value_reason,omitempty"`
 	// 시총 대비 외인 순수급 (참고용)
@@ -38,44 +42,44 @@ func collectImpact(ctx context.Context, deps Deps, date string, flow *FlowSectio
 	section := &ImpactSection{
 		SidecarStatus:    normalizeSidecar(opts.SidecarStatus),
 		SidecarTime:      strings.TrimSpace(opts.SidecarTime),
-		EligibilityState: "EXPIRED_FOR_DAY",
+		EligibilityState: "NOT_EVALUATED",
 		TriggerState:     "TRIGGER_HISTORY_UNKNOWN",
+	}
+	now := opts.AsOf
+	if now.IsZero() {
+		now = time.Now().In(kst.Location)
+	}
+	if date <= now.Format("20060102") && (date < now.Format("20060102") || now.Hour()*60+now.Minute() >= 930) {
+		section.EligibilityState = "EXPIRED_FOR_DAY"
 	}
 	if flow == nil {
 		section.ForeignSellReason = "flow section unavailable"
 		section.ForeignSellTradingValueReason = "flow section unavailable"
 		section.SemiconductorReason = "flow section unavailable"
 	} else {
-		// Fix 2: 거래대금 분모
-		if price != nil && price.TradingValueEok > 0 {
-			pct := flow.ForeignEok / price.TradingValueEok * 100
-			section.ForeignNetFlowToTradingValue = ptr(pct)
-			section.ForeignSellTradingValueLabel = tradingValueLabel(pct)
-			section.ForeignSellTradingValuePolicy = "abs(ratio)<10%"
-		} else {
-			section.ForeignSellTradingValueReason = "trading value unavailable"
-		}
-		// 시총 대비 (참고)
-		if deps.DomesticStock == nil {
-			section.ForeignSellReason = "domestic stock dependency is nil"
-		} else if summary, err := deps.DomesticStock.KOSPIMarketCapSummary(ctx, date); err != nil {
-			section.ForeignSellReason = err.Error()
-		} else {
-			section.TotalKospiMarketCapEok = summary.TotalMarketCap
-			section.ForeignNetFlowToMarketCap = signedPercent(flow.ForeignEok, summary.TotalMarketCap)
-		}
+		// Turnover and investor flow coverage/cutoff have not been reconciled.
+		section.ForeignSellTradingValueReason = "TURNOVER_SCOPE_OR_CUTOFF_UNVERIFIED"
+		// Market-wide flow and master universe have not been scope-reconciled.
+		section.ForeignSellReason = "FLOW_AND_CAP_UNIVERSE_NOT_RECONCILED"
 		// 반도체
-		if opts.SemiconductorForeignNetSellEok != nil {
+		if opts.SemiconductorForeignNetSellEok != nil && *opts.SemiconductorForeignNetSellEok < 0 && flow.ForeignEok < 0 {
 			section.SemiconductorSellConcentrationPct = absPercent(*opts.SemiconductorForeignNetSellEok, flow.ForeignEok)
 		} else {
 			section.SemiconductorReason = "manual input not provided"
 		}
 	}
-	section.collectFutures(ctx, deps.DomesticFuture, date)
+	if date == now.Format("20060102") {
+		section.collectFutures(ctx, deps.DomesticFuture, date)
+	} else {
+		section.FuturesReason = "CURRENT_ONLY_ENDPOINT_EXCLUDED"
+	}
 	return section
 }
 
 func tradingValueLabel(pct float64) string {
+	if pct >= 0 {
+		return "NET_BUYING"
+	}
 	absPct := math.Abs(pct)
 	switch {
 	case absPct < 10:
@@ -90,8 +94,6 @@ func tradingValueLabel(pct float64) string {
 	}
 }
 
-
-
 func (s *ImpactSection) collectFutures(ctx context.Context, futures DomesticFuture, date string) {
 	if futures == nil {
 		s.FuturesReason = "domestic future dependency is nil"
@@ -102,13 +104,26 @@ func (s *ImpactSection) collectFutures(ctx context.Context, futures DomesticFutu
 		s.FuturesReason = err.Error()
 		return
 	}
+	if resolved == nil {
+		s.FuturesReason = "contract missing"
+		return
+	}
 	s.FuturesCode = resolved.Record.ShortCode
 	resp, err := futures.InquirePrice(ctx, "F", resolved.Record.ShortCode)
 	if err != nil {
 		s.FuturesReason = err.Error()
 		return
 	}
+	if !resp.IsOK() {
+		s.FuturesReason = "futures business error"
+		return
+	}
 	row := firstRow(resp, "output1", "output")
+	s.FuturesObservedAt = sourceTime(row)
+	s.FuturesStatus = "TIMESTAMP_MISSING"
+	if !s.FuturesObservedAt.IsZero() {
+		s.FuturesStatus = "RAW_OBSERVATION"
+	}
 	if row == nil {
 		s.FuturesReason = "futures price output missing"
 		return

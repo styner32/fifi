@@ -1,53 +1,33 @@
 package premarket
 
-func calculateVulnerabilityMatrix(t1 Tier1Direction, t2 Tier2Amplification, t3 Tier3Character) VulnerabilityMatrix {
-	vul := VulnerabilityMatrix{
-		DScore:      t1.DScore,
-		AScore:      t2.AScore,
-		SScore:      t2.SScore,
-		TotalFields: 23,
-	}
+import "sort"
 
-	missing := 0
-	if len(t1.QualityFlags) > 0 {
-		missing += len(t1.QualityFlags)
+func calculateVulnerabilityMatrix(t1 Tier1Direction, t2 Tier2Amplification, in map[string]Observation) VulnerabilityMatrix {
+	v := VulnerabilityMatrix{DScore: t1.DScore, AScore: t2.AScore, SScore: t2.SScore, TotalFields: len(in), OverallGrade: "COMPOSITE_NOT_CIRCULABLE", Suppressed: true}
+	for key, o := range in {
+		if !o.available() {
+			v.MissingInputs = append(v.MissingInputs, key)
+		}
 	}
-	if len(t2.QualityFlags) > 0 {
-		missing += len(t2.QualityFlags)
+	sort.Strings(v.MissingInputs)
+	v.MissingCount = len(v.MissingInputs)
+	if v.TotalFields > 0 {
+		v.CoveragePct = float64(v.TotalFields-v.MissingCount) / float64(v.TotalFields) * 100
 	}
-	vul.MissingCount = missing
-
-	conf := (1.0 - (float64(missing) / float64(vul.TotalFields))) * 100.0
-	if conf < 0 {
-		conf = 0
+	if t1.DScore == nil || t2.AScore == nil || t2.SScore == nil {
+		return v
 	}
-	vul.ConfidencePct = conf
-
-	// Confidence Gating: Suppress grade if missing > 40% (confidence < 60%)
-	if conf < 60.0 {
-		vul.Suppressed = true
-	}
-
-	// Grade Rules:
-	// CRITICAL : D=3 AND A>=2 AND S>=2
-	// RED      : D>=2 AND (A+S)>=3
-	// AMBER    : Any axis >= 2
-	// GREEN    : Otherwise
+	d, a, s := *t1.DScore, *t2.AScore, *t2.SScore
+	v.Suppressed = false
 	switch {
-	case vul.DScore == 3 && vul.AScore >= 2 && vul.SScore >= 2:
-		vul.OverallGrade = "CRITICAL"
-	case vul.DScore >= 2 && (vul.AScore+vul.SScore) >= 3:
-		vul.OverallGrade = "RED"
-	case vul.DScore >= 2 || vul.AScore >= 2 || vul.SScore >= 2:
-		vul.OverallGrade = "AMBER"
+	case d == 3 && a >= 2 && s >= 2:
+		v.OverallGrade = "CRITICAL"
+	case d >= 2 && a+s >= 3:
+		v.OverallGrade = "RED"
+	case d >= 2 || a >= 2 || s >= 2:
+		v.OverallGrade = "AMBER"
 	default:
-		vul.OverallGrade = "GREEN"
+		v.OverallGrade = "GREEN"
 	}
-
-	// Self-check for internal contradictions
-	if vul.DScore == 0 && t2.SigmaDaily >= 4.5 {
-		vul.SelfCheckFail = true
-	}
-
-	return vul
+	return v
 }

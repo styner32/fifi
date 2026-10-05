@@ -23,11 +23,19 @@ func collectFlow(ctx context.Context, stock flowStock, marketDiv, indexDiv strin
 		return FlowSnapshot{}, fmt.Errorf("inquire-investor-time-by-market (%s): %w", marketDiv, err)
 	}
 
+	if resp == nil || !resp.IsOK() {
+		return FlowSnapshot{}, fmt.Errorf("%s: invalid business response", marketDiv)
+	}
 	row := resp.FirstRow("output")
 	if row == nil {
 		return FlowSnapshot{}, fmt.Errorf("inquire-investor-time-by-market (%s): output 행 없음", marketDiv)
 	}
 
+	for _, key := range []string{"frgn_ntby_tr_pbmn", "orgn_ntby_tr_pbmn", "prsn_ntby_tr_pbmn", "scrt_ntby_tr_pbmn", "ivtr_ntby_tr_pbmn", "fund_ntby_tr_pbmn", "pe_fund_ntby_tr_pbmn", "insu_ntby_tr_pbmn", "bank_ntby_tr_pbmn", "etc_corp_ntby_tr_pbmn", "mrbn_ntby_tr_pbmn"} {
+		if v, ok := parse.Num(row, key); !ok || !finite(v) {
+			return FlowSnapshot{}, fmt.Errorf("%s: missing/invalid %s", marketDiv, key)
+		}
+	}
 	get := func(key string) float64 {
 		v, _ := parse.Num(row, key)
 		return v / millionToEok // 백만원 → 억원
@@ -46,6 +54,6 @@ func collectFlow(ctx context.Context, stock flowStock, marketDiv, indexDiv strin
 		EtcCorp:     get("etc_corp_ntby_tr_pbmn"),
 		EtcForeign:  get("etc_frgn_ntby_tr_pbmn"),
 		EtcFin:      get("mrbn_ntby_tr_pbmn"),
-		OK:          true,
+		OK:          true, EtcForeignOK: validFields(row, "etc_frgn_ntby_tr_pbmn"), Source: "KIS inquire-investor-time-by-market", FetchedAt: now, LastTS: sourceTimestamp(row), AsOf: stringField(row, "aspr_hour"),
 	}, nil
 }

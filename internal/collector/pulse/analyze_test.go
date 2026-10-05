@@ -83,7 +83,7 @@ var _ = Describe("Analyze", func() {
 		Expect(combined).To(ContainSubstring("디커플링"))
 	})
 
-	It("Risk-off 종합 라벨: 외인 대규모 매도 + 원화 약세", func() {
+	It("불완전 입력으로 종합 판정을 발행하지 않음", func() {
 		usdkrwMove := 0.5
 		p := &Pulse{
 			Now:  base,
@@ -99,7 +99,7 @@ var _ = Describe("Analyze", func() {
 			Errors: map[string]string{},
 		}
 		bullets := Analyze(p)
-		Expect(bullets[0]).To(ContainSubstring("RISK_OFF"))
+		Expect(bullets[0]).To(ContainSubstring("COMPOSITE_NOT_CIRCULABLE"))
 	})
 
 	It("데이터 없을 때 패닉 없이 실행", func() {

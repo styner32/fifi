@@ -43,18 +43,31 @@ func (s *Service) InquireInvestor(ctx context.Context, marketDivCode string, inp
 }
 
 func (s *Service) InquireInvestorDailyByMarket(ctx context.Context, yyyymmdd string) (*auth.RESTResponse, error) {
+	return s.InquireInvestorDailyForMarket(ctx, "KOSPI", yyyymmdd)
+}
+
+// InquireInvestorDailyForMarket keeps the existing KOSPI entry point unchanged.
+func (s *Service) InquireInvestorDailyForMarket(ctx context.Context, market, yyyymmdd string) (*auth.RESTResponse, error) {
 	yyyymmdd = strings.TrimSpace(yyyymmdd)
 	if yyyymmdd == "" {
 		return nil, errors.New("yyyymmdd is required")
 	}
 
+	code, category := "0001", "KSP"
+	switch market {
+	case "KOSPI":
+	case "KOSDAQ":
+		code, category = "1001", "KSQ"
+	default:
+		return nil, errors.New("market must be KOSPI or KOSDAQ")
+	}
 	params := map[string]string{
 		"FID_COND_MRKT_DIV_CODE": "U",
-		"FID_INPUT_ISCD":         "0001",
+		"FID_INPUT_ISCD":         code,
 		"FID_INPUT_DATE_1":       yyyymmdd,
-		"FID_INPUT_ISCD_1":       "KSP",
+		"FID_INPUT_ISCD_1":       category,
 		"FID_INPUT_DATE_2":       yyyymmdd,
-		"FID_INPUT_ISCD_2":       "0001",
+		"FID_INPUT_ISCD_2":       code,
 	}
 	return s.client.Get(ctx, investorDailyByMarketPath, investorDailyByMarketTRID, "", params)
 }

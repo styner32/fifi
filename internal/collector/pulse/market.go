@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -98,123 +99,78 @@ func symbolVenue(sym string) string {
 	}
 }
 
-// buildWindow는 분봉 시리즈 + 현재가로 Window를 계산합니다.
-// §6.1 알고리즘: 절대 unix 타임스탬프 기준 at-or-before 선택.
+// buildWindow keeps the latest bar price and its timestamp together. Quotes are
+// used only when no valid bar is available; daily change needs a provider baseline.
 func buildWindow(symbol, label string, quote yahoo.Quote, series []yahoo.DailyClose, now time.Time) Window {
-	win := Window{Symbol: symbol, Label: label}
-
-	if len(series) == 0 && quote.Price == 0 {
-		win.Reason = "데이터 없음"
-		return win
-	}
-
-	win.OK = true
-	win.ChangePct = quote.ChangePercent
-
-	// 현재가: quote.Price 우선, 없으면 시리즈 마지막 점
-	current := quote.Price
-	if current == 0 && len(series) > 0 {
-		current = series[len(series)-1].Close
-	}
-	win.Current = current
-
-	win.PrevClose = quote.PreviousClose
-	if win.PrevClose == 0 && current != 0 && quote.ChangePercent != 0 {
-		win.PrevClose = current / (1 + quote.ChangePercent/100)
-	}
-	win.Source = fmt.Sprintf("Yahoo Finance %s", symbol)
+	w := Window{Symbol: symbol, Label: label, FetchedAt: now, Source: "Yahoo Finance " + symbol}
 	if symbol == "KRW=X" {
-		win.Source = "Yahoo Finance 역외 스팟(KRW=X)"
+		w.Source = "Yahoo Finance KRW=X spot (NDF/서울 현물 아님)"
 	}
-
-	// 앵커: 시리즈의 마지막 타임스탬프
-	if len(series) > 0 {
-		lastItem := series[len(series)-1]
-		win.LastTS = time.Unix(lastItem.DateUnix, 0)
-	} else if quote.MarketTimeUnix > 0 {
-		win.LastTS = time.Unix(quote.MarketTimeUnix, 0)
-	}
-
-	win.FetchedAt = now
-	venue := symbolVenue(symbol)
-	nowKST := now.In(kstLocation)
-	isHoliday := IsHoliday(venue, nowKST.Format("20060102"))
-
-	freshness, ageSecs, staleReason := DetermineFreshness(venue, win.LastTS, now, isHoliday)
-	win.Freshness = freshness
-	win.AgeSeconds = ageSecs
-	if staleReason != "" {
-		win.StaleReason = staleReason
-	}
-
-	if win.Freshness == "HOLIDAY" || win.Freshness == "STALE" {
-		win.Move1hPct = nil
-		win.Move2hPct = nil
-		if win.Freshness == "HOLIDAY" {
-			win.Reason = fmt.Sprintf("%s %s 휴장 · 1h/2h N/A · 신호점수 제외", nowKST.Format("2006-01-02"), label)
-		} else {
-			win.Reason = win.StaleReason
+	bars := make([]yahoo.DailyClose, 0, len(series))
+	for _, x := range series {
+		if x.DateUnix > 0 && x.DateUnix <= now.Unix() && x.Close > 0 && finite(x.Close) {
+			bars = append(bars, x)
 		}
-		return win
 	}
-
-	if len(series) == 0 {
-		win.Reason = "분봉 없음 (현재가만 사용)"
-		return win
-	}
-
-	lastTS := series[len(series)-1].DateUnix
-
-	for _, delta := range []struct {
-		hours    int
-		ptrField **float64
-	}{
-		{1, &win.Move1hPct},
-		{2, &win.Move2hPct},
-	} {
-		targetTS := lastTS - int64(delta.hours)*3600
-		ref, partial := atOrBefore(series, targetTS)
-		if ref == nil {
-			continue // 데이터 부족
+	sort.Slice(bars, func(i, j int) bool { return bars[i].DateUnix < bars[j].DateUnix })
+	if len(bars) > 0 {
+		x := bars[len(bars)-1]
+		w.Current = x.Close
+		w.LastTS = time.Unix(x.DateUnix, 0)
+	} else if finite(quote.Price) && quote.Price > 0 {
+		w.Current = quote.Price
+		if quote.MarketTimeUnix > 0 {
+			w.LastTS = time.Unix(quote.MarketTimeUnix, 0)
 		}
-		if ref.Close == 0 {
+	} else {
+		w.Reason = "데이터 없음"
+		return w
+	}
+	w.OK = true
+	// Quote baseline is usable only in the same provider observation date.
+	if quote.PreviousClose > 0 && finite(quote.PreviousClose) && quote.MarketTimeUnix > 0 && time.Unix(quote.MarketTimeUnix, 0).UTC().Format("20060102") == w.LastTS.UTC().Format("20060102") {
+		w.PrevClose = quote.PreviousClose
+		w.ChangePct = (w.Current/w.PrevClose - 1) * 100
+		w.ChangeOK = true
+	}
+	w.Freshness, w.AgeSeconds, w.StaleReason = DetermineFreshness(symbolVenue(symbol), w.LastTS, now, IsHoliday(symbolVenue(symbol), now.In(kstLocation).Format("20060102")))
+	if !usableFreshness(w.Freshness) {
+		w.Reason = w.StaleReason
+		return w
+	}
+	for _, h := range []int{1, 2} {
+		ref, partial := atOrBefore(bars, w.LastTS.Unix()-int64(h)*3600)
+		if ref == nil || partial {
+			w.Reason = "NO_VALID_WINDOW_ANCHOR (1h/2h 기준점 허용 오차 5분)"
 			continue
 		}
-		movePct := (current - ref.Close) / ref.Close * 100
-		*delta.ptrField = ptr(movePct)
-
-		// KRW=X 희소 시리즈: 간격이 45분 이상이면 근사 표기
-		if symbol == "KRW=X" && partial {
-			win.Reason = "KRW=X 희소 시리즈 — 인접 과거점 근사 사용"
+		rt := time.Unix(ref.DateUnix, 0)
+		if (symbol == "^KS11" || symbol == "^KQ11" || symbol == "^N225") && !sameDay(rt, w.LastTS) {
+			continue
 		}
-		if partial && win.Reason == "" {
-			win.Reason = "부분 데이터 (룩백이 시리즈 시작보다 과거)"
+		v := (w.Current/ref.Close - 1) * 100
+		if h == 1 {
+			w.Move1hPct = &v
+			w.Ref1hTS = &rt
+		} else {
+			w.Move2hPct = &v
+			w.Ref2hTS = &rt
 		}
 	}
-
-	return win
+	return w
 }
 
-// atOrBefore는 series에서 targetTS ≤ ts 조건 중 ts 최대인 점을 반환합니다.
-// 없으면 첫 점을 반환하고 partial=true.
-func atOrBefore(series []yahoo.DailyClose, targetTS int64) (ref *yahoo.DailyClose, partial bool) {
-	// 시리즈는 오름차순 정렬됨
-	best := -1
-	for i, item := range series {
-		if item.DateUnix <= targetTS {
-			best = i
+// A 5-minute series may anchor at most 5 minutes before the target.
+func atOrBefore(series []yahoo.DailyClose, targetTS int64) (*yahoo.DailyClose, bool) {
+	var best *yahoo.DailyClose
+	for i := range series {
+		x := series[i]
+		if x.DateUnix <= targetTS && (best == nil || x.DateUnix > best.DateUnix) {
+			best = &x
 		}
 	}
-	if best >= 0 {
-		item := series[best]
-		// 45분(2700초) 이상 차이면 희소
-		gap := targetTS - item.DateUnix
-		return &item, gap > 2700
+	if best == nil {
+		return nil, true
 	}
-	// 타깃이 시리즈 시작보다 과거 → 첫 점 fallback
-	if len(series) > 0 {
-		item := series[0]
-		return &item, true
-	}
-	return nil, false
+	return best, targetTS-best.DateUnix > 300
 }
