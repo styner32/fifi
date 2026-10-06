@@ -22,7 +22,7 @@ func WriteJSONAtomic(path string, payload any) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -56,7 +56,7 @@ func WriteCacheFile(path string, raw []byte) {
 	if path == "" || len(raw) == 0 {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return
 	}
 	tmpPath := path + ".tmp"

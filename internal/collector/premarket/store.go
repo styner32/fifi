@@ -67,7 +67,7 @@ func (s *Store) Save() error {
 		return err
 	}
 	dir := filepath.Dir(s.filePath)
-	if err = os.MkdirAll(dir, 0755); err != nil {
+	if err = os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(dir, ".premarket-*.tmp")
