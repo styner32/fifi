@@ -380,10 +380,10 @@ func MDPath(opts Options, date string) string {
 // SaveMD는 렌더 결과를 MD 파일로 저장합니다.
 func SaveMD(opts Options, date, content string) error {
 	dir := resolveStoreDir(opts)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
-	return os.WriteFile(pulseMDPath(dir, date), []byte(content), 0o644)
+	return os.WriteFile(pulseMDPath(dir, date), []byte(content), 0o600)
 }
 
 func computeSingleFlowDelta(prevRec *PulseRecord, cur FlowSnapshot, curIdx float64, now time.Time, market string) *FlowDelta {
