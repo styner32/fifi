@@ -115,7 +115,7 @@ var _ = Describe("KOSPIActualPBR", func() {
 		}
 		rawCache, err := json.Marshal(cached)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(os.WriteFile(actualCachePath, rawCache, 0o644)).To(Succeed())
+		Expect(os.WriteFile(actualCachePath, rawCache, 0o600)).To(Succeed())
 
 		masterBody := strings.Join([]string{
 			buildKOSPIMasterLine("A000001", "ALPHA", "Y", "100", "20", "20250331", "100"),
