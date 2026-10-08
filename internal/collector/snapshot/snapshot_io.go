@@ -100,7 +100,7 @@ func (s *Snapshot) ToJSON() *SnapshotJSON {
 // SaveJSON은 스냅샷을 날짜별 JSON 파일로 저장합니다.
 // 경로: <dir>/market_snapshot.<YYYYMMDD>.json
 func SaveJSON(s *Snapshot, dir string) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
 	date := s.ToJSON().Date

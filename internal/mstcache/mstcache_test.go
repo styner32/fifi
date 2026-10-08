@@ -53,7 +53,7 @@ var _ = Describe("Mstcache Cache Managers", func() {
 			mstPath := filepath.Join(tmpDir, "master.mst")
 			jsonPath := filepath.Join(tmpDir, "master.json")
 
-			Expect(os.WriteFile(mstPath, []byte("mst"), 0o644)).To(Succeed())
+			Expect(os.WriteFile(mstPath, []byte("mst"), 0o600)).To(Succeed())
 
 			// 1. JSON does not exist -> generated
 			called := false
