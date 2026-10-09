@@ -6,7 +6,6 @@ package kofia
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"github.com/fifi/internal/parse"
@@ -57,12 +56,8 @@ func NewClient(userAgent string) *Client {
 	if userAgent == "" {
 		userAgent = defaultUA
 	}
-	// FreeSIS uses a certificate that may fail verification in some environments.
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
 	return &Client{
-		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},
+		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar},
 		userAgent:  userAgent,
 	}
 }
