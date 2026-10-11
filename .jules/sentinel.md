@@ -14,3 +14,8 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+
+## 2025-03-09 - [Insecure TLS Configuration] Securely Resolve InsecureSkipVerify
+**Vulnerability:** HTTP clients were explicitly disabling TLS certificate verification (`InsecureSkipVerify: true`) to bypass certificate validation issues, exposing the application to Man-in-the-Middle (MitM) attacks.
+**Learning:** Security tools (like gosec) flag this, but simply removing the flag causes functional regressions if the certificate chain isn't trusted by default.
+**Prevention:** Rather than disabling verification, securely resolve certificate validation issues by retrieving the required valid server certificate, embedding it in the code, and appending it to `x509.SystemCertPool()` configured inside the `tls.Config{RootCAs: pool}` block.
