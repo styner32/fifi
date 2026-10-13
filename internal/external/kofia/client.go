@@ -57,9 +57,19 @@ func NewClient(userAgent string) *Client {
 	if userAgent == "" {
 		userAgent = defaultUA
 	}
+
+	pool, err := GetKofiaCertPool()
+	if err != nil {
+		// Fallback to empty pool or system pool; next request will likely fail,
+		// but this is safer than allowing insecure connections.
+		pool = nil
+	}
+
 	// FreeSIS uses a certificate that may fail verification in some environments.
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{
+			RootCAs: pool,
+		},
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},
