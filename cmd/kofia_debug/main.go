@@ -10,11 +10,17 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"time"
+
+	"github.com/fifi/internal/external/kofia"
 )
 
 func main() {
 	jar, _ := cookiejar.New(nil)
-	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	tlsConfig, _ := kofia.GetTLSConfig()
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{}
+	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar, Transport: transport}
 	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 
