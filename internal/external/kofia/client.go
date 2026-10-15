@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"github.com/fifi/internal/parse"
@@ -17,6 +19,18 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed certs/kofia.pem
+var kofiaCerts []byte
+
+// GetTLSConfig returns a TLS configuration that trusts the embedded KOFIA certificates.
+func GetTLSConfig() (*tls.Config, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(kofiaCerts) {
+		return nil, fmt.Errorf("failed to append KOFIA certificates")
+	}
+	return &tls.Config{RootCAs: pool}, nil
+}
 
 const (
 	baseURL        = "https://freesis.kofia.or.kr"
@@ -57,9 +71,16 @@ func NewClient(userAgent string) *Client {
 	if userAgent == "" {
 		userAgent = defaultUA
 	}
-	// FreeSIS uses a certificate that may fail verification in some environments.
+
+	tlsConfig, err := GetTLSConfig()
+	if err != nil {
+		// Fallback to empty config; requests will likely fail if the system doesn't trust the cert,
+		// but we avoid InsecureSkipVerify: true.
+		tlsConfig = &tls.Config{}
+	}
+
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: tlsConfig,
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},
