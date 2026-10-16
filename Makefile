@@ -25,6 +25,9 @@ DATE ?= $(shell date +%Y%m%d)
 takesnapshot:
 	go run ./cmd/agent report market-snapshot --date $(DATE)
 
+filings-snapshot: ## Generate DART filings snapshot only: make filings-snapshot [DATE=YYYYMMDD]
+	go run ./cmd/agent report filings-snapshot --date $(DATE) $(ARGS)
+
 SYMBOLS ?=
 WATCHLIST ?= watchlist.txt
 creditbalance: ## Credit balance: make creditbalance or make creditbalance SYMBOLS="005930"
@@ -66,6 +69,13 @@ market-collector: ## Run market collector daemon
 
 market-collector-backfill: ## Backfill facts from pulse and snapshots
 	go run ./cmd/market-collector backfill
+
+ARGS ?=
+market-collector-filings: ## Run major-company DART filings collector daemon (targets: docs/filing_targets.txt)
+	go run ./cmd/market-collector filings run $(ARGS)
+
+market-collector-filings-once: ## Collect major-company filings once: make market-collector-filings-once ARGS="--dry-run"
+	go run ./cmd/market-collector filings once $(ARGS)
 
 dart-filing-web: ## Run DART Filing Web Frontend dev server
 	npm --prefix web run dev

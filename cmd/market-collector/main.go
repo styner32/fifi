@@ -51,8 +51,10 @@ func run(args []string) error {
 		return runOnce(cmdArgs)
 	case "backfill":
 		return runBackfill(cmdArgs)
+	case "filings":
+		return runFilings(cmdArgs)
 	default:
-		return fmt.Errorf("unknown command %q (supported: run, once, backfill)", cmd)
+		return fmt.Errorf("unknown command %q (supported: run, once, backfill, filings)", cmd)
 	}
 }
 

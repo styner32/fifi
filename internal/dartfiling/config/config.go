@@ -13,6 +13,7 @@ type Config struct {
 	DartAPIKey     string
 	KosisAPIKey    string
 	OpenAIAPIKey   string
+	OpenAIModel    string // OPENAI_MODEL; empty falls back to openai.DefaultModel (gpt-6-luna)
 	AllowedOrigins string
 }
 
@@ -26,6 +27,7 @@ func LoadConfig() (*Config, error) {
 		DartAPIKey:     getEnv("DART_API_KEY", ""),
 		KosisAPIKey:    getEnv("KOSIS_API_KEY", ""),
 		OpenAIAPIKey:   getEnv("OPENAI_API_KEY", ""),
+		OpenAIModel:    getEnv("OPENAI_MODEL", ""),
 		AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 	}, nil
 }

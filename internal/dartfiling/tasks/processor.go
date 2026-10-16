@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/fifi/internal/dartfiling/config"
 	"github.com/fifi/internal/dartfiling/models"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/openai/openai-go/v3/shared"
 	"gorm.io/gorm"
 )
 
@@ -31,8 +33,22 @@ func NewTaskProcessor(db *gorm.DB, config *config.Config) *TaskProcessor {
 		DB:           db,
 		config:       config,
 		dartClient:   dart.New(config.DartAPIKey),
-		fileAnalyzer: openai.NewFileAnalyzer(config.OpenAIAPIKey),
+		fileAnalyzer: openai.NewFileAnalyzer(config.OpenAIAPIKey, shared.ResponsesModel(config.OpenAIModel)),
 	}
+}
+
+// ErrFetchReportList marks a failure of the DART disclosure list call itself
+// (as opposed to a failure while processing an individual report).
+var ErrFetchReportList = errors.New("failed to fetch report list")
+
+// FetchReportsResult summarizes one FetchAndAnalyzeReports call.
+type FetchReportsResult struct {
+	Listed     int   // disclosures returned by DART list API
+	Skipped    int   // already stored in raw_reports
+	NotFound   int   // DART returned no original document
+	Stored     int   // newly stored raw_reports
+	Analyzed   int   // newly stored analyses
+	UsedTokens int64 // total OpenAI tokens
 }
 
 func (p *TaskProcessor) HandleFetchReportsTask(ctx context.Context, t *asynq.Task) error {
@@ -57,46 +73,63 @@ func (p *TaskProcessor) HandleFetchReportsTask(ctx context.Context, t *asynq.Tas
 		pageInfos = append(pageInfos, info)
 	}
 
-	rawReports, err := p.dartClient.GetRecentRawReports(pageInfos...)
-	if err != nil {
+	_, err := p.FetchAndAnalyzeReports(ctx, pageInfos...)
+	if errors.Is(err, ErrFetchReportList) {
+		// Preserve previous behavior: list failures are logged, not retried.
 		log.Printf("failed to fetch reports: %v", err)
 		return nil
 	}
+	return err
+}
+
+// FetchAndAnalyzeReports lists disclosures, stores new raw reports, analyzes
+// them with OpenAI and stores the analyses. Already stored receipt numbers are
+// skipped, so repeated calls are idempotent.
+func (p *TaskProcessor) FetchAndAnalyzeReports(ctx context.Context, pageInfos ...dart.PageInfo) (FetchReportsResult, error) {
+	var summary FetchReportsResult
+
+	rawReports, err := p.dartClient.GetRecentRawReports(pageInfos...)
+	if err != nil {
+		return summary, fmt.Errorf("%w: %v", ErrFetchReportList, err)
+	}
+	summary.Listed = len(rawReports)
 
 	totalUsedTokens := int64(0)
 	var analyses []models.Analysis
 	for _, rawReport := range rawReports {
 		count, err := gorm.G[models.RawReport](p.DB).Where("receipt_number = ?", rawReport.RceptNo).Count(ctx, "id")
 		if err != nil {
-			return err
+			return summary, err
 		}
 
 		if count > 0 {
 			log.Printf("raw report already exists: %s", rawReport.RceptNo)
+			summary.Skipped++
 			continue
 		}
 
 		rawDocument, err := p.dartClient.GetDocument(rawReport.RceptNo)
 		if err == dart.ErrDocumentNotFound {
 			log.Printf("document not found: %s %s %s %s", rawReport.RceptDt, rawReport.RceptNo, rawReport.CorpName, rawReport.ReportNm)
+			summary.NotFound++
 			continue
 		}
 
 		if err != nil {
 			log.Printf("failed to get document: %v", err)
-			return err
+			return summary, err
 		}
 
 		doc, err := xbrl.ParseXBRL([]byte(rawDocument))
 		if err != nil {
 			log.Printf("failed to parse XBRL document: %v", err)
-			return err
+			return summary, err
 		}
 
 		j, err := json.MarshalIndent(doc, "", "  ")
 		if err != nil {
 			log.Printf("failed to marshal JSON: %v", err)
-			return err
+			return summary, err
 		}
 
 		dbRawReport := models.RawReport{
@@ -111,8 +144,9 @@ func (p *TaskProcessor) HandleFetchReportsTask(ctx context.Context, t *asynq.Tas
 		result := gorm.WithResult()
 		err = gorm.G[models.RawReport](p.DB, result).Create(ctx, &dbRawReport)
 		if err != nil {
-			return err
+			return summary, err
 		}
+		summary.Stored++
 
 		reportType := ""
 		if strings.Contains(doc.ReportTitle, "분기보고서") || strings.Contains(doc.ReportTitle, "사업보고서") || strings.Contains(doc.ReportTitle, "반기보고서") {
@@ -166,7 +200,7 @@ func (p *TaskProcessor) HandleFetchReportsTask(ctx context.Context, t *asynq.Tas
 				result := gorm.WithResult()
 				err = gorm.G[models.ReportType](p.DB, result).Create(ctx, &rt)
 				if err != nil {
-					return err
+					return summary, err
 				}
 
 				v.SchemaSuggestion = ""
@@ -189,6 +223,7 @@ func (p *TaskProcessor) HandleFetchReportsTask(ctx context.Context, t *asynq.Tas
 		log.Printf("processed raw report: %s, %s, %d, %d", dbRawReport.ReceiptNumber, dbRawReport.CorpCode, dbRawReport.BlobSize, usedTokens)
 
 		totalUsedTokens += usedTokens
+		summary.UsedTokens = totalUsedTokens
 
 		log.Printf("total used tokens: %d", totalUsedTokens)
 	}
@@ -199,13 +234,14 @@ func (p *TaskProcessor) HandleFetchReportsTask(ctx context.Context, t *asynq.Tas
 		err := gorm.G[models.Analysis](p.DB, result).CreateInBatches(ctx, &analyses, len(analyses))
 		if err != nil {
 			log.Printf("failed to store analyses in batch: %v", err)
-			return err
+			return summary, err
 		}
+		summary.Analyzed = len(analyses)
 		log.Printf("successfully stored %d analyses in batch", len(analyses))
 	}
 
 	log.Println("Reports fetched successfully")
-	return nil
+	return summary, nil
 }
 
 func (p *TaskProcessor) HandleFetchCompaniesTask(ctx context.Context, t *asynq.Task) error {

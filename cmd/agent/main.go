@@ -35,11 +35,13 @@ func main() {
 func run(args []string) error {
 	_ = godotenv.Load()
 	if len(args) < 2 || args[0] != "report" {
-		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|credit-balance|intraday-pulse|premarket|rsi|safety-devices> [args...]")
+		return fmt.Errorf("usage: go run ./cmd/agent report <market-snapshot|filings-snapshot|credit-balance|intraday-pulse|premarket|rsi|safety-devices> [args...]")
 	}
 	switch args[1] {
 	case "market-snapshot":
 		return runMarketSnapshot(args[2:])
+	case "filings-snapshot":
+		return runFilingsSnapshot(args[2:])
 	case "credit-balance":
 		return runCreditBalance(args[2:])
 	case "intraday-pulse":
@@ -51,7 +53,7 @@ func run(args []string) error {
 	case "safety-devices":
 		return runIntradayPulse(append([]string{"--safety-only"}, args[2:]...))
 	default:
-		return fmt.Errorf("unknown report type %q (supported: market-snapshot, credit-balance, intraday-pulse, premarket, rsi, safety-devices)", args[1])
+		return fmt.Errorf("unknown report type %q (supported: market-snapshot, filings-snapshot, credit-balance, intraday-pulse, premarket, rsi, safety-devices)", args[1])
 	}
 }
 
@@ -121,6 +123,9 @@ func runMarketSnapshot(args []string) error {
 			fmt.Fprintf(os.Stderr, "[snapshot] MD save failed: %v\n", err)
 		}
 	}
+
+	// ── 당일 주요 기업 공시 스냅샷 (market_filings.<YYYYMMDD>.{md,json}) ────────
+	runFilingsSnapshotForMarketSnapshot(date, outDir)
 	return nil
 }
 

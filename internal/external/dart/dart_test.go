@@ -67,6 +67,19 @@ var _ = Describe("DartClient", func() {
 			Expect(list[0].ReportNm).To(Equal("분기보고서 (2025.03)"))
 		})
 
+		Context("조회 기간에 공시가 없어 DART가 013을 반환하면", func() {
+			It("오류 대신 빈 목록을 반환한다", func() {
+				testhelpers.New("https://opendart.fss.or.kr").
+					Get("/api/list.json").
+					Reply(200).
+					BodyString(`{"status":"013","message":"조회된 데이타가 없습니다."}`)
+
+				list, err := client.GetRecentRawReports(dart.PageInfo{CorpCode: "00164779", Limit: 2})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(list).To(BeEmpty())
+			})
+		})
+
 		It("fetches the next page if there are more reports", func() {
 			payload := `{
 				"status":"000",
