@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"github.com/fifi/internal/parse"
@@ -17,6 +19,9 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed certs/freesis.pem
+var FreesisCertPEM []byte
 
 const (
 	baseURL        = "https://freesis.kofia.or.kr"
@@ -57,9 +62,12 @@ func NewClient(userAgent string) *Client {
 	if userAgent == "" {
 		userAgent = defaultUA
 	}
-	// FreeSIS uses a certificate that may fail verification in some environments.
+
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(FreesisCertPEM)
+
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{RootCAs: caCertPool},
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},
