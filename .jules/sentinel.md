@@ -14,3 +14,8 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+
+## 2026-10-19 - Removed InsecureSkipVerify in KOFIA Client
+**Vulnerability:** The KOFIA Client and kofia_debug tool used `InsecureSkipVerify: true` in the TLS configuration, exposing the application to Man-in-the-Middle (MitM) attacks by completely ignoring SSL/TLS certificate validation.
+**Learning:** `InsecureSkipVerify` was used as a workaround because FreeSIS uses a custom/untrusted certificate chain.
+**Prevention:** Instead of skipping verification, embed the custom certificate and use it by appending it to the root certificate pool (`RootCAs`) during TLS configuration.
