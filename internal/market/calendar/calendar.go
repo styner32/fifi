@@ -9,9 +9,7 @@ import (
 
 // IsHoliday checks if the given venue is closed on the specific date (YYYYMMDD).
 func IsHoliday(venue string, dateStr string) bool {
-	if venue == "JPX" && dateStr == "20260720" {
-		return true // Marine Day in Japan
-	}
+	// Weekday exchange closures require a provider; no historical one-off list.
 	return false
 }
 
@@ -22,7 +20,7 @@ func GetMarketPhase(venue string, t time.Time, isHoliday bool) string {
 	}
 
 	// Weekend check
-	weekday := t.Weekday()
+	weekday := t.In(kst.Location).Weekday()
 	if weekday == time.Saturday || weekday == time.Sunday {
 		return "CLOSED"
 	}
@@ -57,21 +55,20 @@ func GetMarketPhase(venue string, t time.Time, isHoliday bool) string {
 
 // DetermineFreshness calculates the freshness category and metrics.
 func DetermineFreshness(venue string, lastTS, now time.Time, isHoliday bool) (string, float64, string) {
-	if isHoliday {
-		return "HOLIDAY", now.Sub(lastTS).Seconds(), "Market is closed for holiday"
-	}
 	if lastTS.IsZero() {
 		return "UNKNOWN", 0, "No timestamp available"
 	}
 
 	ageSeconds := now.Sub(lastTS).Seconds()
 	if ageSeconds < 0 {
-		// Clock skew fallback
-		return "FRESH", ageSeconds, "Quote timestamp is in the future"
+		return "UNKNOWN", ageSeconds, "FUTURE_TIMESTAMP"
+	}
+	if isHoliday {
+		return "HOLIDAY", ageSeconds, "Market is closed for holiday"
 	}
 
 	// Weekend check
-	weekday := now.Weekday()
+	weekday := now.In(kst.Location).Weekday()
 	if weekday == time.Saturday || weekday == time.Sunday {
 		return "STALE", ageSeconds, "Weekend"
 	}

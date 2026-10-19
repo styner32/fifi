@@ -68,7 +68,22 @@ var _ = Describe("예탁금 증감 검증", func() {
 
 ## 실행
 
-저장소 루트에서 `go test`를 실행하면 Ginkgo 스위트가 실행된다. 실행 도구와 테스트 작성 스타일은 별개이며, 별도 Ginkgo CLI 설치는 필요하지 않다.
+저장소 루트에서 로컬 의존성과 격리된 테스트 DB를 준비한다. `test-db-prepare`는 로컬 Compose PostgreSQL에 `_test` DB를 생성하고 migration을 적용한다. 기존 로컬 앱 DB와 저장 보고서는 유지한다.
+
+```bash
+make setup
+make services-up
+make test-db-prepare
+make test
+make test-race
+make check
+```
+
+`make test`와 `make test-integration`은 같은 격리 환경에서 전체 Go 스위트를 실행한다. `make check`에는 문서 링크, 웹 build와 lint가 포함된다. `make test-race`도 프로젝트 Go 스위트 전체를 검사한다. 범위를 줄일 때는 `TEST_PACKAGES='./internal/localdev'`처럼 지정한다. 별도 Ginkgo CLI 설치는 필요하지 않다.
+
+외부 테스트 DB를 사용하면 `TEST_DATABASE_URL`과 `TEST_REDIS_URL`을 명시한다. DB 이름은 `_test`로 끝나야 하며 전체 migration이 적용돼 있어야 한다. Make의 일반 설정은 명시한 환경변수·Make 할당 → `.env` → 로컬 기본값 순서이며, 테스트 설정은 앱의 `DATABASE_URL`·`REDIS_URL`과 분리한다.
+
+수정한 패키지의 고정 fixture 테스트는 직접 실행할 수도 있다.
 
 ```bash
 # 변경한 패키지의 스위트 실행
@@ -80,8 +95,10 @@ go test -race -count=1 ./internal/collector/snapshot ./internal/external/kofia
 # Ginkgo의 사례별 실행 결과 보기
 go test -v ./internal/collector/snapshot -ginkgo.v
 
-# 전체 테스트 (make test와 동일)
-go test ./...
+# 격리 설정·DB 검사를 포함한 전체 테스트
+make test
 ```
 
 변경 범위에 맞는 스위트를 실행하고 결과를 확인한다. 외부 서비스가 필요한 통합 테스트는 해당 의존성을 준비한 뒤 실행하며, 실제로 실행하지 않은 검증을 완료했다고 기록하지 않는다.
+
+전체 DB suite는 같은 fixture 테이블을 초기화하므로 `-p 1`로 패키지를 순차 실행한다. 직접 `go test`로 DB suite를 실행할 때도 동일한 격리 환경을 전달해야 한다. 프로세스 환경변수는 `.env.test`보다 우선한다. 로컬 서비스와 명령 목록은 [로컬 개발 가이드](MAINTENANCE.md)를 참고한다.

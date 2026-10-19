@@ -70,3 +70,7 @@
 `go test -race ./internal/collector/premarket ./internal/external/dataapi ./internal/domesticstock ./cmd/agent ./internal/collector/pulse ./internal/collector/snapshot`
 
 고정 날짜 검증은 시장 구분, 0 보존, 거래일 누락, 중복 충돌, 20일 평균의 전일 제외, 원/백만원 단위 변환, 하락 부호, 전종목 페이지 완결성, 공개 API 인증키 오류 노출 방지, 공식 일정 부분 실패, 미국 DST 및 날짜 전용 일정을 포함한다.
+
+## 공통 서비스·저장 정비 (2026-10-18)
+
+CLI와 시장 MCP는 같은 수집·저장 서비스를 사용합니다. 보고서 JSON/Markdown과 기존 schema 2 이력을 저장하고, 교체하는 보고서의 이전 파일을 보존합니다. 취소·시간 초과가 확인된 수집은 당일의 기존 이력을 덮어쓰지 않습니다. `--no-save`는 보고서·이력에 적용되며 원천 캐시와 구분합니다. [로컬 MCP](MARKET_MCP.md)를 참고하세요.

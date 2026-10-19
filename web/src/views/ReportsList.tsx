@@ -57,7 +57,6 @@ export function ReportsList() {
     };
 
     fetchAll();
-    setExpandedRowKey(null);
 
     return () => {
       active = false;
@@ -76,7 +75,10 @@ export function ReportsList() {
           <label>Company:</label>
           <CompanySelect
             selectedCompany={selectedCompany}
-            onSelect={setSelectedCompany}
+            onSelect={(company) => {
+              setSelectedCompany(company);
+              setExpandedRowKey(null);
+            }}
             placeholder="Search company (optional)..."
           />
         </div>
@@ -85,7 +87,10 @@ export function ReportsList() {
           <input
             type="date"
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => {
+              setStartDate(e.target.value);
+              setExpandedRowKey(null);
+            }}
           />
         </div>
         <div className="filter-group">
@@ -93,7 +98,10 @@ export function ReportsList() {
           <input
             type="date"
             value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => {
+              setEndDate(e.target.value);
+              setExpandedRowKey(null);
+            }}
           />
         </div>
       </div>

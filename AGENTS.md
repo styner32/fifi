@@ -5,7 +5,7 @@ This file documents the project's technology stack, architectural decisions, dev
 ## Tech Stack & Architecture
 
 ### Backend
-- **Language:** Go (v1.26)
+- **Language:** Go (v1.27.2, pinned in `go.mod` and `.go-version`)
 - **Web Framework:** Gin
 - **Database:** PostgreSQL (GORM ORM, `golang-migrate`)
 - **Job Queue:** Asynq (Redis-backed)
@@ -16,6 +16,7 @@ This file documents the project's technology stack, architectural decisions, dev
 ### Frontend (`web/`)
 - **Language:** TypeScript
 - **Framework:** React SPA (Vite)
+- **Toolchain:** Node 24.22.0 LTS / npm 12.2.0; TypeScript 6.0.3 (the supported typescript-eslint range excludes TypeScript 7)
 - **Dev Server:** `npm --prefix web run dev` (`make dart-filing-web`)
 - **Build Tool:** `npm --prefix web run build` (`make dart-filing-web-build`)
 
@@ -23,7 +24,7 @@ This file documents the project's technology stack, architectural decisions, dev
 - **open-trading-api:** `external/open-trading-api` (Submodule tracking `https://github.com/koreainvestment/open-trading-api.git`)
 
 ### Infrastructure & Tools
-- **Containerization:** Docker Compose (PostgreSQL 18, Redis Stack)
+- **Containerization:** Docker Compose (PostgreSQL 18.6, Redis 8.10.2; preserve the original Redis Stack volume during migration)
 - **Migrations:** `golang-migrate` (`make migrate-up`)
 - **Task Runner:** Makefile
 
@@ -42,8 +43,8 @@ This file documents the project's technology stack, architectural decisions, dev
 - Follow [the testing guide](docs/TESTING.md) for examples and verification practices.
 
 ## Project Structure
-- `cmd/`: Entry points for applications (`main.go`, `agent/`, `dart-filing-api/`, `dart-filing-worker/`, `dart-filing-worker-cli/`, `dart-filing-mcp/`).
-- `internal/`: Core business logic (`domesticstock/`, `domesticfutureoption/`, `companyanalysis/`, `dcf/`, `dartfiling/`, `kosis/`, `db/`).
+- `cmd/`: Entry points (`main.go`, `agent/`, `fifi-mcp/`, `market-collector/`, `dart-filing-api/`, `dart-filing-worker/`, `dart-filing-worker-cli/`). Existing `market-mcp/` and `dart-filing-mcp/` are compatibility wrappers for the same unified server.
+- `internal/`: Core business logic (`domesticstock/`, `domesticfutureoption/`, `companyanalysis/`, `dcf/`, `dartfiling/`, `external/kosis/`, `market/`, `marketreport/`, `fifimcp/`, `db/`).
 - `web/`: Vite + React TypeScript SPA frontend.
 - `external/`: External reference submodules (`external/open-trading-api`).
 - `docs/`: Technical documentation and CLI guides.
@@ -52,6 +53,18 @@ This file documents the project's technology stack, architectural decisions, dev
 ---
 
 # Domain & Implementation Rules
+
+## Market Reports and MCP
+
+- The current report contracts are `docs/PREMARKET_DATA_CONTRACT.md`, `docs/NOW_DATA_CONTRACT.md`, and `docs/SNAPSHOT_DATA_CONTRACT.md`. Initial designs under `docs/archive/` are historical, not implementation instructions.
+- One local `fifi` MCP server exposes the existing three market tools and three disclosure tools. `make mcp` / `make mcp-build` are canonical; old market/disclosure MCP commands start the same six-tool server. Keep tool names and request/output contracts stable.
+- CLI and market MCP tools share the report service. Market tools save reports/history by default. Disclosure tools read the separately started DART REST API; API unavailability affects only disclosure calls, not initialization, tool listing, or market calls. MCP must not start the API, DART synchronization, or OpenAI analysis automatically.
+- Use only actual source prices. Never create synthetic prices, fixed publication cutoffs, or magnitude-based amount conversions in a production report.
+- Preserve missing values as null and observed zero as zero. Source observation time is distinct from retrieval time; never manufacture an observation timestamp.
+- Facts provenance version 0 is legacy/unverified and excluded from accepted fallback reads. Retain legacy raw evidence; only source-validated observations may receive the current provenance version.
+- Logs, including GORM diagnostics, go to stderr. MCP stdout is reserved for protocol messages.
+- Worker restarts preserve queues. A new fetch/analyze bootstrap batch requires `DART_WORKER_BOOTSTRAP_FETCH_REPORTS=true`; startup never deletes pending/retry/scheduled/archived tasks.
+- See `docs/MARKET_MCP.md` for the single-server local configuration and `docs/MAINTENANCE.md` for local setup, data preservation, and isolated verification.
 
 ## KOSPI Master (`kospi_code.mst`)
 
@@ -93,12 +106,16 @@ This file documents the project's technology stack, architectural decisions, dev
   - `net_income`
   - `roe`
   - `base_date`
+  - `kospi_index_member`
+  - `preferred_class`
+  - `security_group`
 - The JSON also includes:
   - `business_date`
   - `generated_at`
   - `source_path`
   - `record_count`
   - `fields`
+  - `schema_version` (currently 2)
 
 ## PBR Notes
 
@@ -135,8 +152,8 @@ This file documents the project's technology stack, architectural decisions, dev
 - If the business date changes, download and store a new dated file.
 - Current near-month KOSPI200 futures resolution in Go prefers:
   - environment override `QUAD_WITCHING_FUTURES_CODE`
-  - otherwise `info_type == 1` and short code prefix `101`
-  - then `month_class_code == 1` (recent month)
+  - otherwise futures `info_type == 1` with KOSPI200 underlying `2001` / `201`
+  - recent-month classification and short-code prefix `101` are selection preferences, not substitutes for the underlying validation
 - Keep the JSON sidecar for human inspection if you change this logic.
 - Quadruple witching runnable snapshot now writes a dated JSON export:
   - base path env: `QUAD_WITCHING_SNAPSHOT_JSON_FILE`
@@ -162,11 +179,11 @@ This file documents the project's technology stack, architectural decisions, dev
   - `exact`: directly from KIS response fields
   - `derived`: computed from KIS response fields
   - `assumed`: env/default assumption layer
-- Current practical defaults:
-  - `RiskFreeRate`: prefer `DCF_RISK_FREE_BOND_CODE` + `/uapi/domestic-bond/v1/quotations/inquire-price`, then `comp-interest`, then env override
+- Current practical defaults (explicit option/environment overrides take precedence):
+  - `RiskFreeRate`: explicit `DCF_RISK_FREE_RATE`, otherwise `DCF_RISK_FREE_BOND_CODE` + `/uapi/domestic-bond/v1/quotations/inquire-price`, then `comp-interest`
   - `RiskFreeRate` row selection fallback can be narrowed with `DCF_RISK_FREE_NAME_HINT`
-  - `Beta`: prefer KIS daily-return regression, then env override
-  - `MarketPremium`: prefer external provider, then env/file override, then assumption fallback
+  - `Beta`: explicit `DCF_BETA`, otherwise KIS daily-return regression
+  - `MarketPremium`: explicit `DCF_MARKET_PREMIUM`, otherwise selected provider (`damodaran` by default, `file` when configured), then assumption fallback
   - `NetDebt`: proxy via `EV - market cap`, with fallback debt-dependence proxy
   - `CostOfDebt`: proxy via non-operating expense and debt proxy, with assumption fallback
 - Treat DCF enterprise/equity values as `억원`-scaled financial values unless a different normalization layer is added.

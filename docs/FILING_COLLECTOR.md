@@ -76,5 +76,7 @@ make filings-snapshot DATE=20261014 ARGS="--no-sync" # 이미 DB에 저장된 �
 - `.cache/snapshots/market_filings.<YYYYMMDD>.md` — 당일 공시 요약 테이블 및 기업별 상세 분석 마크다운
 - `.cache/snapshots/market_filings.<YYYYMMDD>.json` — 구조화된 JSON 스냅샷 (`summary_ko`, `key_terms`, `key_dates` 등 포함)
 
-`SNAP_SYNC_FILINGS=false`로 설정하면 `make takesnapshot` 실행 시 DART/OpenAI 실시간 동기화를 건너뛰고 DB(`raw_reports`, `analyses`)에 이미 저장된 당일 공시만 조회해 파일로 정리합니다.
+`MARKET_SNAPSHOT_SKIP_FILINGS_SYNC=true`로 설정하면 `make takesnapshot` 실행 시 DART/OpenAI 실시간 동기화를 건너뛰고 DB(`raw_reports`, `analyses`)에 이미 저장된 당일 공시만 조회해 파일로 정리합니다.
 
+
+`MARKET_SNAPSHOT_SKIP_FILINGS=true`는 공시 후속 작업 전체를 생략합니다. 시장 MCP는 이 후속 작업을 호출하지 않습니다. 워커 재시작은 기존 큐를 보존하며, 시작 시 새 수집 배치를 넣으려면 `DART_WORKER_BOOTSTRAP_FETCH_REPORTS=true`를 명시합니다.

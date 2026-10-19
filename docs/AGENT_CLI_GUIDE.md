@@ -1,157 +1,67 @@
-# Agent CLI Guide (`go run ./cmd/agent report`)
+# Agent CLI
 
-This guide documents the newly added agent report CLI commands under [`cmd/agent`](../cmd/agent). These commands provide real-time market risk diagnostics, leverage indicators, vulnerability metrics, and technical indicators.
+`go run ./cmd/agent report <명령> [플래그]`로 실행합니다. 데이터 의미는 각 데이터 계약이 기준입니다. 성공적으로 출력됐다는 사실은 시각·단위·거래소 확정·모델 정확성이 검증됐다는 뜻이 아닙니다.
 
----
+| 명령 / Make 타깃 | 기능 | 출력·저장·부작용 |
+|---|---|---|
+| `premarket` / `make premarket` | 장전 관측·공식 일정·결측 상태 | `--json`, `--no-save`, `--store-dir`; 기본 `.cache/premarket` |
+| `intraday-pulse` / `make now` | 현재 관측과 당일 이력 비교 | `--json`, `--no-save`, `--no-history` (`--no-prev` 별칭), `--store-dir`; 기본 `.cache/pulse` |
+| `market-snapshot` / `make takesnapshot` | 요청일 일별 데이터와 조회 시점 문맥 | `--date YYYYMMDD`; 기본 `.cache/snapshots`; CLI는 이어서 공시 동기화를 시도 |
+| `filings-snapshot` / `make filings-snapshot` | 주요 기업 공시 | DART·OpenAI·DB 작업 가능; `--no-sync`는 이미 저장된 공시 조회 |
+| `rsi` | Yahoo 가격의 RSI | `--symbol`, `--period`, `--days`, `--method`, `--interval`, `--json`; 보고서 저장 없음 |
+| `credit-balance --ratio` | 동일 기준일의 신용융자/예탁금 비율 | `--days` (1~250), `--json`; 보고서 저장 없음 |
+| `credit-balance <종목...>` / `make creditbalance` | 종목별 신용잔고 | KIS 인증 필요; 기본 `.cache/credit_balance`에 저장 |
+| `safety-devices` | 펄스의 안전장치 관측 | 펄스와 같은 수집·저장; 공식 발동 기록은 별도 입력 |
 
-## Command Overview
+`--no-save`는 보고서·이력 저장을 생략하는 옵션입니다. 인증 토큰·KOFIA·휴장일·종목 마스터 등의 원천 캐시 갱신과 구분합니다. JSON 결측은 `null`, 실제 응답의 0은 0입니다.
+
+## 시장 보고서
 
 ```bash
-go run ./cmd/agent report <subcommand> [flags...]
+make premarket
+make now
+make now-debug
+make takesnapshot DATE=20261016
+go run ./cmd/agent report premarket --json --no-save
+go run ./cmd/agent report intraday-pulse --json --no-save
 ```
 
-### Supported Subcommands
+- [장전 계약](PREMARKET_DATA_CONTRACT.md): 검증되지 않은 D/A/S 점수·예측 신뢰도는 `null`, 종합은 `COMPOSITE_NOT_CIRCULABLE`입니다. 신용·VKOSPI 백분위는 각각 60개·250개 유효 과거 원자료 기준일이 필요합니다.
+- [장중 계약](NOW_DATA_CONTRACT.md): 실제 관측 시각과 적절한 기준점이 없으면 시간 구간 변화를 계산하지 않습니다. 첫 수집은 시초가가 아닙니다.
+- [Snapshot 계약](SNAPSHOT_DATA_CONTRACT.md): 과거 요청에 현재 전용 시세를 섞지 않고, 장후에도 `POST_CLOSE_UNRECONCILED`를 보존합니다. 날짜는 KST이며 명시한 휴장일을 임의로 전일로 바꾸지 않습니다.
+- 공시 작업 전체 생략: `MARKET_SNAPSHOT_SKIP_FILINGS=true`. 실시간 DART/OpenAI 동기화만 생략: `MARKET_SNAPSHOT_SKIP_FILINGS_SYNC=true`. 자세한 내용은 [공시 수집기](FILING_COLLECTOR.md).
 
-| Subcommand | Description | Primary Metric / Output |
-| :--- | :--- | :--- |
-| **`premarket`** | 개장 전 시장 취약도 지표 보드 (v1.0) | 3-Tier 취약도 벡터 (방향성, 증폭, 확인) & 종합 위험 등급 (`RED`/`AMBER` 등) |
-| **`rsi`** | KOSPI / KOSDAQ / 개별 종목 14일 RSI 시계열 엔진 | Wilder/SMA 방식 선택, 타임프레임별(`1d`, `60m`, `15m`, `5m`) RSI 도출 |
-| **`credit-balance`** | 시스템 실질 레버리지 (`신용잔고 ÷ 투자자예탁금`) 시계열 | 완충 현금 대비 빚 비중(%), 출처 명시(`CreditSrc`/`DepositSrc`), QC 자동 검증 |
-| **`safety-devices`** | 시장 안전장치 (사이드카/서킷브레이커) 모니터링 | 발동 이력, CB1~3 발동선 남은 거리(p, %p), 매도 사이드카 잔여기회 |
-| **`intraday-pulse`** | 장중 펄스 및 위험 상태 모니터링 | 실시간 지수, 변동성, 안전장치 통합 관측 |
-| **`market-snapshot`** | 시장 종합 스냅샷 리포트 | 주식/선물/옵션/글로벌 통합 스냅샷 |
-
----
-
-## 1. Premarket Vulnerability Board (`report premarket`)
-
-개장 전 해외 증시, 야간 선물, ADR, 변동성, 미수금/반대매매 현황을 수집하여 시장의 **시스템 취약도(Vulnerability Score)**를 산출합니다.
-
-### Usage
+## RSI
 
 ```bash
-go run ./cmd/agent report premarket
-```
-
-### Features & Output
-
-1. **Tier 1 Directional Vector (방향성 벡터)**:
-   - SK하이닉스 ADR(`SKHY_ADR`), 반도체지수(`US_SEMI_COMPOSITE`), 나스닥 야간 디버전스, EWY, NDF 환율 갭.
-2. **Tier 2 Amplification Vector (증폭 벡터)**:
-   - 신용융자 잔고, 미수금/위탁매매 반대매매 비중, VKOSPI 일간 변동성 $\sigma_{daily} = \text{VKOSPI}/\sqrt{252}$, 250일 백분위, T+2 이코노믹 캘린더 이벤트.
-3. **Tier 3 Confirmation Vector (확인 벡터)**:
-   - KOR CDS 5Y, 환율-주가 괴리도.
-4. **Vulnerability Score Matrix**:
-   - $D, A, S$ 가중점수 기반 종합 위험 등급 (`CRITICAL`, `RED`, `AMBER`, `GREEN`) 및 자기검증 Gating (`[SELF-CHECK FAIL]` 감지시 조기 리턴).
-
----
-
-## 2. RSI Historical Series Engine (`report rsi`)
-
-KOSPI 지수, KOSDAQ 지수 또는 개별 종목의 상대강도지수(RSI) 시계열을 도출합니다.
-
-### Usage
-
-```bash
-# KOSPI 지수 14일 RSI (Wilder 평활화 기본)
-go run ./cmd/agent report rsi --symbol kospi --period 14
-
-# KOSDAQ 60분봉 14일 RSI (SMA 방식)
+go run ./cmd/agent report rsi --symbol kospi --period 14 --days 30
 go run ./cmd/agent report rsi --symbol kosdaq --interval 60m --method sma
-
-# 특정 종목 (SK하이닉스) JSON 출력
-go run ./cmd/agent report rsi --symbol 000660 --days 30 --json
+go run ./cmd/agent report rsi --symbol 000660 --json
 ```
 
-### Flags
+기본 심볼은 `^KS11`, 기간은 14, 출력 관측 수는 30, 주기는 `1d`, 방식은 `wilder`입니다. `sma`/`cutler`도 지원합니다. `kospi`, `kosdaq`, `samsung`/`005930`, `skhynix`/`000660` 별칭을 지원합니다. Yahoo 조회에는 KIS 인증이 필요하지 않습니다. 조회 오류·표본 부족·잘못된 관측은 오류이며 합성 가격을 생성하지 않습니다. 당일 봉은 완결 종가가 아닐 수 있습니다.
 
-| Flag | Default | Description |
-| :--- | :---: | :--- |
-| `--symbol` | `kospi` | 종목 코드 또는 얼라이어스 (`kospi`, `kosdaq`, `samsung`, `skhynix`, `005930` 등) |
-| `--period` | `14` | RSI 산출 기간 (일 기본: 14) |
-| `--days` | `30` | 조회할 역사적 일수 |
-| `--method` | `wilder` | 산출 공식 (`wilder`: 지수평활 / `sma` or `cutler`: 단순평균) |
-| `--interval` | `1d` | 봉 타임프레임 주기 (`1d`, `60m`, `15m`, `5m`) |
-| `--json` | `false` | JSON 형식 출력 여부 |
-
-#### Interval Timeframe Options (`--interval`)
-
-* **`1d`** (Default): 일봉 데이터 기준 산출 (중장기 추세 분석용)
-* **`60m`**: 60분봉 데이터 기준 산출 (시간 단위 추세 및 모멘텀 분석용)
-* **`15m`**: 15분봉 데이터 기준 산출 (장중 단기 모멘텀 분석용)
-* **`5m`**: 5분봉 데이터 기준 산출 (고빈도 장중 파동 분석용)
-
-Example:
-```bash
-# 60분봉 14기간 RSI 산출
-go run ./cmd/agent report rsi --symbol kospi --period 14 --interval 60m
-
-# 15분봉 14기간 RSI 산출 (Cutler/SMA 방식)
-go run ./cmd/agent report rsi --symbol 000660 --period 14 --interval 15m --method sma
-```
-
----
-
-## 3. Real System Leverage Report (`report credit-balance --ratio`)
-
-시장의 완충 현금(투자자예탁금) 대비 빚(신용융자 잔고)의 비율인 **시스템 실질 레버리지 (`신용잔고 ÷ 투자자예탁금`)** 시계열을 도출합니다.
-
-### Usage
+## 신용 비율
 
 ```bash
-# 최근 30영업일 실질 레버리지 시계열 및 위험 진단
-go run ./cmd/agent report credit-balance --ratio
-
-# 최근 60영업일 조회
-go run ./cmd/agent report credit-balance --ratio --days 60
-
-# 특정 종목 신용잔고 조회
+go run ./cmd/agent report credit-balance --ratio --days 30 --json
 go run ./cmd/agent report credit-balance 005930 000660
 ```
 
-### Key Technical Specs
+비율 = 동일 기준일 신용융자 잔고 / 양수인 투자자예탁금 × 100. 신용은 KIS `mktfunds.crdt_loan_rmnd`, 예탁금은 KIS 또는 같은 날짜의 KOFIA 값입니다. KIS 억원은 `/10000`, KOFIA `KRW_MILLION`은 `/1000000`으로 조원에 변환합니다. 크기로 단위를 추정하지 않습니다.
 
-* **지표 산식**: $\text{System Leverage (\%)} = \left(\frac{\text{Credit Balance (조원)}}{\text{Customer Deposit (조원)}}\right) \times 100$
-* **컬럼별 출처 분리 (`CreditSrc` / `DepositSrc`)**:
-  * `anchor`: 금투협/KRX 공식 공표 수치 (6/24 38.6328조, 7/9 36.63조, 7/27 32.7411조 등)
-  * `api`: KOFIA / KIS API 실측 수집치
-  * `unreleased_t1`: T+1 시차로 공표 대기 중인 날짜
-* **자동 QC 검증 시스템 (`validateLeverageReportQC`)**:
-  * QC 1: 합성 선형 감쇠 검정 (`uniquePct >= 5`)
-  * QC 2: 예탁금 단위 이봉 검정 (50~200조원 조원 정규화)
-  * QC 3: 진단 라벨 엔트로피 검정 (단일 라벨 비중 $\le 80\%$)
+신용·예탁금·증감·비율은 결측 시 JSON `null`입니다. 날짜 없는 값, 다른 날짜, 알 수 없는 단위, 충돌하는 원자료로 비율을 만들지 않습니다. 공표 지연은 확인 전 미공표/T+1로 단정하지 않습니다. 위험 진단은 `NOT_EVALUATED`이며 과거 고정 앵커·가격 대체·라벨 분포 QC는 사용하지 않습니다. 이 nullable 출력은 예전 수치 0 기반 출력과 다릅니다.
 
----
-
-## 4. Market Safety Devices Monitor (`report safety-devices`)
-
-매도 사이드카(Sidecar) 소진 여부 및 서킷브레이커(Circuit Breaker 1~3단계) 발동선까지의 잔여 거리(p, %p)를 관측합니다.
-
-### Usage
+## 안전장치
 
 ```bash
-go run ./cmd/agent report safety-devices
+go run ./cmd/agent report safety-devices --no-save
 ```
 
-### Key Metrics
+임계 가격은 당일 전일종가에 비율을 적용합니다. 고정된 과거 지수 예시를 현재 발동선으로 사용하지 않습니다. `OFFICIAL_EVENTS_FILE`의 날짜·출처·발동/해제 시각을 검증하며 공식 자동 연동 여부는 [장중 계약](NOW_DATA_CONTRACT.md)을 따릅니다.
 
-* **KOSPI 8% (CB1) 발동선**: 5,541.77p (잔여 거리p 및 %p 표시)
-* **KOSPI 15% (CB2) 발동선**: 5,119.63p
-* **KOSPI 20% (CB3) 발동선**: 4,778.32p
-* **사이드카 현황**: 매도 사이드카 소진 여부 및 발동 조건 감시
+## MCP·수집기·검증
 
----
+[시장 MCP](MARKET_MCP.md)는 세 시장 수집기를 로컬 LLM 도구로 제공합니다. 공시 MCP와 별도이며 시장 MCP는 공시 동기화·OpenAI 분석을 실행하지 않습니다. 백그라운드 시장 facts 수집과 pulse 파일 적립은 서로 다른 경로입니다.
 
-## Verification & Testing
-
-CLI의 신규·수정 테스트는 Ginkgo v2 + Gomega로 작성합니다. 조건은 `Context`, 기대 동작은 `It`, 반복 사례는 `DescribeTable`로 구분합니다. [테스트 가이드](TESTING.md)의 작성 규칙을 따릅니다.
-
-저장소 루트에서 실행합니다. `go test`는 기존 Ginkgo 스위트를 실행하므로 별도 Ginkgo CLI 설치가 필요하지 않습니다.
-
-```bash
-# CLI 및 스냅샷 관련 스위트
-go test -race ./cmd/agent ./internal/collector/snapshot ./internal/external/kofia
-
-# 전체 테스트
-go test ./...
-```
+신규·수정 Go 테스트는 기존 Ginkgo v2/Gomega suite를 사용합니다. [테스트 가이드](TESTING.md)와 [유지보수·이전](MAINTENANCE.md)을 따르세요.

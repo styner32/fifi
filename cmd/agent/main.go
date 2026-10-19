@@ -7,21 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/fifi/internal/auth"
 	"github.com/fifi/internal/collector/premarket"
 	"github.com/fifi/internal/collector/pulse"
-	"github.com/fifi/internal/collector/snapshot"
-	"github.com/fifi/internal/domesticfutureoption"
-	"github.com/fifi/internal/domesticstock"
-	"github.com/fifi/internal/external/dataapi"
-	"github.com/fifi/internal/external/kofia"
 	"github.com/fifi/internal/external/naver"
 	"github.com/fifi/internal/external/yahoo"
-	"github.com/fifi/internal/market/facts"
+	"github.com/fifi/internal/marketreport"
 	"github.com/joho/godotenv"
 )
 
@@ -62,301 +56,97 @@ func runMarketSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	client, err := newKISClient()
+	config := marketreport.ConfigFromEnv()
+	result, err := marketreport.New(config).RunSnapshot(context.Background(), opts, true)
+	if result != nil {
+		fmt.Print(result.Markdown)
+		logReportResult(result)
+	}
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	if _, err := client.EnsureAuthToken(ctx); err != nil {
-		return fmt.Errorf("auth token: %w", err)
-	}
-
-	yahooClient, naverClient := newExternalClients(client)
-	kofiaClient := kofia.NewCachedClient(envDefault("KOFIA_CACHE_DIR", ".cache"), os.Getenv("USER_AGENT"))
-	outDir := envDefault("SNAPSHOT_OUTPUT_DIR", ".cache/snapshots")
-	opts.OutputDir = outDir
-	result := snapshot.Collect(ctx, snapshot.Deps{
-		DomesticStock:  domesticstock.NewService(client),
-		DomesticFuture: domesticfutureoption.NewService(client),
-		Yahoo:          yahooClient,
-		Naver:          naverClient,
-		KOFIA:          kofiaClient,
-		Facts:          facts.NewStore(os.Getenv("DATABASE_URL")),
-	}, opts)
-	// ── 이전 날짜 스냅샷 로드 (비교용) ──────────────────────────────────────────
-	date := result.BusinessDate
-	if result.SessionStatus == "INVALID_DATE" {
-		return result.Errors["date"]
-	}
-	var prev *snapshot.SnapshotJSON
-	if outDir != "" {
-		if p, err := snapshot.LoadPreviousSnapshot(outDir, date); err == nil && p != nil {
-			prev = p
-			fmt.Fprintf(os.Stderr, "[snapshot] 비교 데이터 로드: %s\n", p.Date)
-		}
-	}
-
-	// ── 렌더링 (이전 데이터가 있으면 비교 표시) ──────────────────────────────────
-	output := snapshot.Render(result, prev)
-	fmt.Print(output)
-
-	// ── JSON + Markdown 저장 ─────────────────────────────────────────────────
-	if outDir != "" {
-		// JSON 저장 (다음 날 비교용)
-		if jsonPath, err := snapshot.SaveJSON(result, outDir); err == nil {
-			fmt.Fprintf(os.Stderr, "[snapshot] JSON saved: %s\n", jsonPath)
-		} else {
-			fmt.Fprintf(os.Stderr, "[snapshot] JSON save failed: %v\n", err)
-		}
-		// Markdown 저장 (사람 읽기용)
-		mdPath := filepath.Join(outDir, fmt.Sprintf("market_snapshot.%s.md", date))
-		if raw, err := os.ReadFile(mdPath); err == nil {
-			archive := fmt.Sprintf("%s.previous.%d", mdPath, time.Now().UnixNano())
-			if err = os.WriteFile(archive, raw, 0600); err != nil {
-				return fmt.Errorf("preserve previous Markdown: %w", err)
-			}
-		}
-		if err := os.WriteFile(mdPath, []byte(output), 0o644); err == nil {
-			fmt.Fprintf(os.Stderr, "[snapshot] MD saved: %s\n", mdPath)
-		} else {
-			fmt.Fprintf(os.Stderr, "[snapshot] MD save failed: %v\n", err)
-		}
-	}
-
-	// ── 당일 주요 기업 공시 스냅샷 (market_filings.<YYYYMMDD>.{md,json}) ────────
-	runFilingsSnapshotForMarketSnapshot(date, outDir)
+	// Filing sync remains CLI-only and is intentionally outside marketreport.
+	runFilingsSnapshotForMarketSnapshot(result.Snapshot.BusinessDate, config.SnapshotDir)
 	return nil
 }
 
-// runIntradayPulse는 근실시간 시장 펄스를 수집하고 출력합니다.
 func runIntradayPulse(args []string) error {
 	fs := flag.NewFlagSet("intraday-pulse", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	storeDir := fs.String("store-dir", envDefault("PULSE_OUTPUT_DIR", ".cache/pulse"), "펄스 적립 디렉터리")
-	noSave := fs.Bool("no-save", false, "적립/렌더 저장 생략 (읽기 전용)")
-	noHistory := fs.Bool("no-history", false, "이전 적립/누적 레코드 무시 (독립 실행 및 디버깅용)")
-	fs.BoolVar(noHistory, "no-prev", false, "이전 적립/누적 레코드 무시 (no-history와 동일)")
+	noSave := fs.Bool("no-save", false, "보고서/이력 저장 생략 (인증 및 데이터 캐시는 갱신 가능)")
+	noHistory := fs.Bool("no-history", false, "이전 적립/누적 레코드 무시")
+	fs.BoolVar(noHistory, "no-prev", false, "no-history와 동일")
 	asJSON := fs.Bool("json", false, "JSON 출력")
 	safetyOnly := fs.Bool("safety-only", false, "서킷브레이커 및 사이드카 상태만 렌더링")
 	premarketFlag := fs.Bool("premarket", false, "개장전 취약도 보드 실행")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	opts := pulse.Options{
-		StoreDir:  *storeDir,
-		Lookback:  2 * time.Hour,
-		NoSave:    *noSave,
-		NoHistory: *noHistory,
-		JSON:      *asJSON,
-	}
-
-	client, err := newKISClient()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	if _, err := client.EnsureAuthToken(ctx); err != nil {
-		return fmt.Errorf("auth token: %w", err)
-	}
-
-	yahooClient, naverClient := newExternalClients(client)
-
-	result := pulse.Collect(ctx, pulse.Deps{
-		Stock:    domesticstock.NewService(client),
-		Future:   domesticfutureoption.NewService(client),
-		Yahoo:    yahooClient,
-		Naver:    naverClient,
-		Clock:    time.Now,
-		StoreDir: *storeDir,
-	}, opts)
-
-	if *asJSON {
-		if *safetyOnly {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(result.Safety)
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(pulse.PulseToMap(result))
-	}
-
 	if *premarketFlag {
-		return runPremarket(args)
+		forward := []string{}
+		if *noSave {
+			forward = append(forward, "--no-save")
+		}
+		if *asJSON {
+			forward = append(forward, "--json")
+		}
+		return runPremarket(forward)
 	}
-
-	var output string
-	if *safetyOnly {
-		output = pulse.RenderSafetyOnly(result)
-	} else {
-		output = pulse.Render(result)
-	}
-	fmt.Print(output)
-
-	// MD 저장
-	if !*noSave {
-		if err := pulse.SaveMD(opts, result.Date, output); err != nil {
-			fmt.Fprintf(os.Stderr, "[pulse] MD save failed: %v\n", err)
+	result, err := marketreport.New(marketreport.ConfigFromEnv()).RunPulse(context.Background(), pulse.Options{StoreDir: *storeDir, Lookback: 2 * time.Hour, NoSave: *noSave, NoHistory: *noHistory, JSON: *asJSON})
+	if result != nil {
+		logReportResult(result)
+		if *asJSON {
+			var value any = result.Envelope.Report
+			if *safetyOnly && result.Pulse != nil {
+				value = result.Pulse.Safety
+			}
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			if encodeErr := encoder.Encode(value); encodeErr != nil {
+				return encodeErr
+			}
+		} else if *safetyOnly && result.Pulse != nil {
+			fmt.Print(pulse.RenderSafetyOnly(result.Pulse))
 		} else {
-			fmt.Fprintf(os.Stderr, "[pulse] MD saved: %s\n", pulse.MDPath(opts, result.Date))
+			fmt.Print(result.Markdown)
 		}
 	}
-	return nil
+	return err
 }
 
 func runPremarket(args []string) error {
 	fs := flag.NewFlagSet("premarket", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	storeDir := fs.String("store-dir", envDefault("PREMARKET_STORE_DIR", ".cache/premarket"), "개장전 적립 디렉터리")
-	noSave := fs.Bool("no-save", false, "적립/저장 생략")
+	noSave := fs.Bool("no-save", false, "보고서/이력 저장 생략 (인증 및 데이터 캐시는 갱신 가능)")
 	asJSON := fs.Bool("json", false, "JSON 출력")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
-	opts := premarket.Options{
-		StoreDir: *storeDir,
-		NoSave:   *noSave,
-		JSON:     *asJSON,
-	}
-
-	client, kisErr := newKISClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	var stockService premarket.DomesticStock
-	// Public market sources remain usable when KIS credentials/auth are unavailable.
-	httpClient := &http.Client{Timeout: 15 * time.Second}
-	yahooClient := yahoo.NewClient(httpClient, yahoo.Config{UserAgent: os.Getenv("USER_AGENT")})
-	naverClient := naver.NewClient(httpClient, os.Getenv("USER_AGENT"))
-	if kisErr == nil {
-		if _, kisErr = client.EnsureAuthToken(ctx); kisErr == nil {
-			stockService = domesticstock.NewService(client)
+	result, err := marketreport.New(marketreport.ConfigFromEnv()).RunPremarket(context.Background(), premarket.Options{StoreDir: *storeDir, NoSave: *noSave, JSON: *asJSON})
+	if result != nil {
+		logReportResult(result)
+		if *asJSON {
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			if encodeErr := encoder.Encode(result.Envelope.Report); encodeErr != nil {
+				return encodeErr
+			}
+		} else {
+			fmt.Print(result.Markdown)
 		}
 	}
-	kofiaClient := kofia.NewCachedClient(envDefault("KOFIA_CACHE_DIR", ".cache"), os.Getenv("USER_AGENT"))
-
-	result := premarket.Collect(ctx, premarket.Deps{
-		Stock:       stockService,
-		Yahoo:       yahooClient,
-		Naver:       naverClient,
-		KOFIA:       kofiaClient,
-		Clock:       time.Now,
-		StoreDir:    *storeDir,
-		DailyPrices: dataapi.New(os.Getenv("DATA_API_KEY")),
-		Calendar:    &premarket.OfficialCalendar{Client: httpClient, UserAgent: os.Getenv("USER_AGENT")},
-	}, opts)
-	if kisErr != nil {
-		result.Errors["kis"] = kisErr.Error()
-	}
-
-	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
-	}
-
-	output := premarket.Render(result)
-	fmt.Print(output)
-	return nil
+	return err
 }
 
-func runRSI(args []string) error {
-	fs := flag.NewFlagSet("rsi", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	symbol := fs.String("symbol", "^KS11", "지수/종목 코드 (기본: ^KS11 - KOSPI)")
-	period := fs.Int("period", 14, "RSI 기간 (기본: 14)")
-	days := fs.Int("days", 30, "역사적 출력 일수 (기본: 30)")
-	method := fs.String("method", "wilder", "RSI 산출 방식 (wilder: 지수평활/Wilder, sma: 단순평균/Cutler)")
-	interval := fs.String("interval", "1d", "차트 주기 (1d: 일봉, 60m: 1시간봉, 15m: 15분봉, 5m: 5분봉)")
-	asJSON := fs.Bool("json", false, "JSON 시계열 출력")
-	if err := fs.Parse(args); err != nil {
-		return err
+func logReportResult(result *marketreport.Result) {
+	for _, warning := range result.Envelope.Warnings {
+		fmt.Fprintln(os.Stderr, "[market-report] "+warning)
 	}
-
-	symTarget := strings.TrimSpace(*symbol)
-	switch strings.ToLower(symTarget) {
-	case "kospi", "0001", "ksp", "코스피":
-		symTarget = "^KS11"
-	case "kosdaq", "1001", "kdq", "코스닥":
-		symTarget = "^KQ11"
-	case "samsung", "삼성전자", "005930":
-		symTarget = "005930.KS"
-	case "skhynix", "sk하이닉스", "000660":
-		symTarget = "000660.KS"
+	for _, artifact := range result.Envelope.Artifacts {
+		fmt.Fprintf(os.Stderr, "[market-report] %s saved: %s\n", artifact.Kind, artifact.Path)
 	}
-
-	client, _ := newKISClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	var dates []string
-	var closes []float64
-
-	if client != nil {
-		yahooClient, _ := newExternalClients(client)
-		rangeStr := "1y"
-		if *interval != "1d" {
-			rangeStr = "5d"
-		} else if *days > 1250 {
-			rangeStr = "max"
-		} else if *days > 250 {
-			rangeStr = "5y"
-		}
-
-		chartCloses, err := yahooClient.GetChartHistory(ctx, symTarget, rangeStr, *interval)
-		if err == nil && len(chartCloses) > *period {
-			for _, c := range chartCloses {
-				timeFmt := "20060102"
-				if *interval != "1d" {
-					timeFmt = "20060102 15:04"
-				}
-				tStr := time.Unix(c.DateUnix, 0).In(time.FixedZone("KST", 9*3600)).Format(timeFmt)
-				dates = append(dates, tStr)
-				closes = append(closes, c.Close)
-			}
-		}
-	}
-
-	// Fallback data if API client is not configured
-	if len(closes) <= *period {
-		now := time.Now()
-		for i := 120; i >= 0; i-- {
-			d := now.AddDate(0, 0, -i)
-			if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday {
-				dates = append(dates, d.Format("20060102"))
-				closes = append(closes, 6500.0+float64(i%15)*8.0)
-			}
-		}
-	}
-
-	series, err := domesticstock.CalculateRSISeriesWithMethod(dates, closes, *period, *method)
-	if err != nil {
-		return err
-	}
-
-	if len(series) > *days {
-		series = series[len(series)-*days:]
-	}
-
-	if *asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(series)
-	}
-
-	fmt.Printf("📊 %s %d일 RSI 역사적 시계열 리포트 (최근 %d영업일)\n", symTarget, *period, len(series))
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	fmt.Printf("| 날짜 (Date) | 종가 (Close) | %d일 RSI | 신호 (Signal) |\n", *period)
-	fmt.Printf("| :--- | :---: | :---: | :--- |\n")
-	for _, p := range series {
-		fmt.Printf("| %s | %.2f | %.2f | %s |\n", p.Date, p.Close, p.RSI, p.Signal)
-	}
-	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	return nil
 }
 
 func newKISClient() (*auth.KIClient, error) {

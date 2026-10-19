@@ -1,7 +1,9 @@
 package pulse
 
 import (
+	"context"
 	"fmt"
+	"github.com/fifi/internal/market/calendar"
 	"math"
 	"strings"
 	"time"
@@ -31,12 +33,15 @@ func Render(p *Pulse) string {
 		storeInfo = "비교 이력 없음 (1h/2h 수급 변화 N/A)"
 	}
 
-	isHoliday := IsHoliday("KRX", nowKST.Format("20060102"))
-	phase := GetMarketPhase("KRX", p.Now, isHoliday)
+	session := p.Session
+	if session.Status == "" {
+		session = calendar.ResolveKRXSession(context.Background(), nil, p.Now)
+	}
+	phase := session.Phase
 
 	b.WriteString(fmt.Sprintf("🫀 시장 펄스  %s   (%s)\n",
 		nowKST.Format(kstLayout), storeInfo))
-	b.WriteString(fmt.Sprintf("📊 국내 거래소 세션 상태: %s\n", phase))
+	b.WriteString(fmt.Sprintf("📊 국내 거래소 세션 상태: %s\n  %s\n", session.Label(), session.Reason))
 	if phase == "CLOSING_AUCTION" {
 		b.WriteString("⚠️  장 마감 동시호가 진행 중 (15:20 ~ 15:30) · 실시간 지수 변동은 체결 분봉 생성 시점까지 지연될 수 있습니다.\n")
 	}
@@ -486,7 +491,7 @@ func PulseToMap(p *Pulse) map[string]any {
 		}
 		return map[string]any{"price": price, "change_pct": change, "ok": m.Index.OK, "index": m.Index, "window": m.IntradayWin, "move_1h": m.IntradayWin.Move1hPct, "move_2h": m.IntradayWin.Move2hPct, "flow": flow, "flow_delta_prev": m.FlowDeltaPrev, "flow_delta_first": m.FlowDeltaAnchor, "flow_delta_1h": m.FlowDelta1h, "flow_delta_2h": m.FlowDelta2h}
 	}
-	return map[string]any{"schema_version": 2, "ts": p.Now, "date": p.Date, "business_date": p.BusinessDate, "stored_count": p.StoredCount, "kospi": marketMap(p.KOSPI), "kosdaq": marketMap(p.KOSDAQ), "usdkrw": p.USDKRW, "macro": p.Macro, "market_safety": p.Safety, "program_trade": map[string]any{"kospi": p.KOSPIProgram, "kosdaq": p.KOSDAQProgram, "kospi_delta": p.KOSPIProgramDelta, "kosdaq_delta": p.KOSDAQProgramDelta}, "kospi200_future": p.KOSPI200Future, "kosdaq150_future": p.KOSDAQ150Future, "basis_delta_1h": p.BasisDelta1h, "basis_delta_2h": p.BasisDelta2h, "vkospi": p.VKOSPI, "kospi_contributions": p.Contributions, "assessment": p.Assessment, "analysis": p.Analysis, "errors": p.Errors}
+	return map[string]any{"schema_version": 2, "ts": p.Now, "date": p.Date, "business_date": p.BusinessDate, "session": p.Session, "stored_count": p.StoredCount, "kospi": marketMap(p.KOSPI), "kosdaq": marketMap(p.KOSDAQ), "usdkrw": p.USDKRW, "macro": p.Macro, "market_safety": p.Safety, "program_trade": map[string]any{"kospi": p.KOSPIProgram, "kosdaq": p.KOSDAQProgram, "kospi_delta": p.KOSPIProgramDelta, "kosdaq_delta": p.KOSDAQProgramDelta}, "kospi200_future": p.KOSPI200Future, "kosdaq150_future": p.KOSDAQ150Future, "basis_delta_1h": p.BasisDelta1h, "basis_delta_2h": p.BasisDelta2h, "vkospi": p.VKOSPI, "kospi_contributions": p.Contributions, "assessment": p.Assessment, "analysis": p.Analysis, "errors": p.Errors}
 }
 
 func observationLabel(ts, fetched time.Time, fresh string) string {

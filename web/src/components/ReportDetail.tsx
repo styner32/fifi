@@ -20,7 +20,12 @@ export function ReportDetail({ report, corpCode }: ReportDetailProps) {
 
   let parsedAnalysis: unknown = analysisData;
   if (typeof analysisData === 'string') {
-      try { parsedAnalysis = JSON.parse(analysisData); } catch {}
+      try {
+        parsedAnalysis = JSON.parse(analysisData);
+      } catch {
+        // Older reports can contain plain text; display their original value.
+        parsedAnalysis = analysisData;
+      }
   }
 
   return (

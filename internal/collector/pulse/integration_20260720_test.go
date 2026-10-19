@@ -43,7 +43,7 @@ var _ = Describe("2026-07-20 Integration Test", func() {
 	})
 
 	Context("13:07 KST", func() {
-		It("Explicit release observations are preserved, N225 is HOLIDAY", func() {
+		It("preserves explicit releases and leaves an undated N225 quote unknown", func() {
 			now1307 := time.Date(2026, 7, 20, 13, 7, 0, 0, kstLocation)
 			kospiIdx := IndexLevel{Freshness: "FRESH", Price: 2600.0, PrevClose: 2650.0, OK: true}
 			kosdaqIdx := IndexLevel{Freshness: "FRESH", Price: 800.0, PrevClose: 830.0, OK: true}
@@ -79,10 +79,10 @@ var _ = Describe("2026-07-20 Integration Test", func() {
 			// Nikkei 225 holiday test
 			nikkeiLastTS := time.Date(2026, 7, 17, 15, 0, 0, 0, kstLocation) // Previous Friday close
 			nikkeiWin := buildWindow("^N225", "닛케이225", yahoo.Quote{Price: 39500.0, ChangePercent: 0.0}, nil, now1307)
-			Expect(nikkeiWin.Freshness).To(Equal("HOLIDAY"))
+			Expect(nikkeiWin.Freshness).To(Equal("UNKNOWN"))
 			Expect(nikkeiWin.Move1hPct).To(BeNil())
 			Expect(nikkeiWin.Move2hPct).To(BeNil())
-			Expect(nikkeiWin.Reason).To(ContainSubstring("holiday"))
+			Expect(nikkeiWin.Reason).To(ContainSubstring("No timestamp"))
 
 			// Check freshness of nikkeiLastTS on holiday (it will identify as holiday)
 			freshness, _, _ := DetermineFreshness("JPX", nikkeiLastTS, now1307, true)

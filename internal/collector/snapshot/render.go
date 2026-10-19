@@ -22,6 +22,9 @@ func Render(s *Snapshot, prev ...*SnapshotJSON) string {
 		header += fmt.Sprintf(" (이전 저장본: %s)", p.Date)
 	}
 	b.WriteString(header + "\n")
+	if s.Session.Status != "" {
+		b.WriteString("- 조회일 세션: " + s.Session.Label() + " · " + s.Session.Reason + "\n")
+	}
 	b.WriteString("- 수집 시작: " + observationLabel(s.Timestamp) + "\n")
 	b.WriteString("- 수집 완료: " + observationLabel(s.CompletedAt) + "\n")
 	b.WriteString("- 각 항목은 출처의 기준일·관측 시각을 따릅니다. 조회 시각은 가격 확정 시각이 아닙니다.\n\n")

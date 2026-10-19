@@ -34,7 +34,7 @@ type VolatilitySection struct {
 }
 
 // collectVolatility는 VKOSPI(KIS -> Naver -> facts.Store fallback)와 VIX(Yahoo Finance)를 조회합니다.
-func collectVolatility(ctx context.Context, stock DomesticStock, naverClient NaverFinance, yclient YahooQuotes, store facts.Store, indexChange float64, date string, opts Options) *VolatilitySection {
+func collectVolatility(ctx context.Context, stock DomesticStock, naverClient NaverFinance, yclient YahooQuotes, store facts.LatestValidReader, indexChange float64, date string, opts Options) *VolatilitySection {
 	now := opts.AsOf
 	if now.IsZero() {
 		now = time.Now().In(kst.Location)
@@ -72,7 +72,7 @@ func collectVolatility(ctx context.Context, stock DomesticStock, naverClient Nav
 					}
 				}
 			}
-			if date == now.Format("20060102") {
+			if !opts.ExcludeCurrent && date == now.Format("20060102") {
 				if resp, e := stock.InquireVKOSPIPrice(ctx, code); e == nil && resp.IsOK() {
 					r := firstRow(resp, "output")
 					if v, ok := num(r, "bstp_nmix_prpr"); ok && v > 0 {
@@ -116,9 +116,9 @@ func collectVolatility(ctx context.Context, stock DomesticStock, naverClient Nav
 	}
 	// Stored fallbacks retain their original date/time and never become current data.
 	if s.VKOSPI == 0 && store != nil {
-		if last, e := store.LatestValid(ctx, "vkospi.value", 7*24*time.Hour); e == nil && last != nil && last.Value != nil && finite(*last.Value) && *last.Value > 0 && last.BusinessDate <= date && !last.ObservedAt.IsZero() && !last.ObservedAt.After(now) {
+		if last, e := store.LatestValid(ctx, "vkospi.value", 7*24*time.Hour); e == nil && last != nil && facts.AcceptedAt(*last, now) && *last.Value > 0 && facts.NormalizeBusinessDate(last.BusinessDate) <= date {
 			s.VKOSPI = *last.Value
-			s.Date = last.BusinessDate
+			s.Date = facts.NormalizeBusinessDate(last.BusinessDate)
 			s.ObservedAt = last.ObservedAt
 			s.Source = last.Source
 			s.Status = StatusProvisionalLastValid

@@ -1,0 +1,10 @@
+package marketreport
+
+import (
+	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+func TestMarketReport(t *testing.T) { RegisterFailHandler(Fail); RunSpecs(t, "Market report service") }

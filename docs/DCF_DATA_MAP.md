@@ -23,9 +23,9 @@ Implemented code:
 | `ChangeInNWC` | derived | `balance-sheet.output.(cras, flow_lblt)` | Proxy: delta of `(current assets - current liabilities)` |
 | `SharesOut` | exact | `inquire-price.output.lstn_stcn` | Listed shares |
 | `NetDebt` | derived | `other-major-ratios.output.(ebitda, ev_ebitda)` + `inquire-price.output.hts_avls` | Proxy: `EV - market cap`; fallback uses debt dependence |
-| `RiskFreeRate` | exact / assumed | `domestic-bond.inquire-price.output.(stnd_iscd, ernn_rate)` or `comp-interest.output.(hts_kor_isnm, bond_mnrt_prpr)` or `DCF_RISK_FREE_RATE` | Prefers code-based domestic bond quote via `DCF_RISK_FREE_BOND_CODE`; falls back to `comp-interest` name matching |
-| `Beta` | derived / assumed | `inquire-daily-itemchartprice` + `inquire-index-daily-price` or `DCF_BETA` | Rolling beta from matched daily returns |
-| `MarketPremium` | exact / assumed | Damodaran implied ERP provider, `DCF_MARKET_PREMIUM`, or `DCF_MARKET_PREMIUM_FILE` | Prefers external provider; falls back to `5.5%` assumption only when provider is unavailable |
+| `RiskFreeRate` | exact / assumed | `domestic-bond.inquire-price.output.(stnd_iscd, ernn_rate)` or `comp-interest.output.(hts_kor_isnm, bond_mnrt_prpr)` or `DCF_RISK_FREE_RATE` | Explicit option/env override first; otherwise code-based bond quote then `comp-interest` |
+| `Beta` | derived / assumed | `inquire-daily-itemchartprice` + `inquire-index-daily-price` or `DCF_BETA` | Explicit option/env override first; otherwise regression from matched daily returns |
+| `MarketPremium` | exact / assumed | Damodaran implied ERP provider, `DCF_MARKET_PREMIUM`, or `DCF_MARKET_PREMIUM_FILE` | Explicit option/env override first; otherwise selected provider (damodaran or file), then `5.5%` fallback |
 | `CostOfDebt` | derived / assumed | `income-statement.output.bsop_non_expn` + `stability-ratio.output.bram_depn` or `DCF_COST_OF_DEBT` | Proxy from non-operating expense over debt proxy; fallback uses risk-free + spread |
 | `EquityWeight` | derived | market cap + net debt proxy | Prefers market-value capital structure |
 | `DebtWeight` | derived | market cap + net debt proxy | Falls back to book-capital proxy |
