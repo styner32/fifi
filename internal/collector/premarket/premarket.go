@@ -58,6 +58,10 @@ func Collect(ctx context.Context, deps Deps, opts Options) *PremarketReport {
 	r.Tier3 = collectTier3()
 	r.VUL = calculateVulnerabilityMatrix(r.Tier1, r.Tier2, r.Inputs)
 	r.HardData = collectHardData(r.Inputs)
+	if err := ctx.Err(); err != nil {
+		r.Errors["context"] = err.Error()
+		return r
+	}
 	if !opts.NoSave && store.Err == nil && r.Errors["date"] == "" {
 		store.UpsertRecord(DailyRecord{Date: date, ObservedAt: now, Inputs: r.Inputs, DomesticInputs: r.DomesticInputs, Calendar: &r.Calendar})
 		if err := store.Save(); err != nil {

@@ -13,10 +13,7 @@ export function Dashboard() {
 
   // Fetch reports when company changes
   useEffect(() => {
-    if (!selectedCompany) {
-      setReports([]);
-      return;
-    }
+    if (!selectedCompany) return;
     const code = getFieldValue<string>(
       selectedCompany as unknown as Record<string, unknown>,
       "corp_code"
@@ -69,6 +66,8 @@ export function Dashboard() {
           <CompanySelect
             selectedCompany={selectedCompany}
             onSelect={(c) => {
+              setReports([]);
+              setLoading(false);
               setSelectedCompany(c);
               setSelectedReportId("");
             }}

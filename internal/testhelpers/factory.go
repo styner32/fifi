@@ -19,7 +19,8 @@ func LoadTestEnv() {
 	for {
 		testEnvPath := filepath.Join(dir, ".env.test")
 		if _, err := os.Stat(testEnvPath); err == nil {
-			_ = godotenv.Overload(testEnvPath)
+			// Explicit process settings (CI / isolated local test DB) take precedence.
+			_ = godotenv.Load(testEnvPath)
 			return
 		}
 		parent := filepath.Dir(dir)

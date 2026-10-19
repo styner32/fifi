@@ -11,6 +11,7 @@ import (
 	"github.com/fifi/internal/db"
 	"github.com/fifi/internal/external/dart"
 	"github.com/fifi/internal/external/openai"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 func fatalUsage() {
@@ -134,7 +135,7 @@ func main() {
 
 func runDryRun(cfg *config.Config, receiptNumber string) {
 	dartClient := dart.New(cfg.DartAPIKey)
-	fileAnalyzer := openai.NewFileAnalyzer(cfg.OpenAIAPIKey)
+	fileAnalyzer := openai.NewFileAnalyzer(cfg.OpenAIAPIKey, shared.ResponsesModel(cfg.OpenAIModel))
 
 	log.Printf("Running dry-run analysis for receipt_number=%s...", receiptNumber)
 	err := tasks.FetchReportDryRun(dartClient, fileAnalyzer, receiptNumber)

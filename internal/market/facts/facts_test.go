@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/fifi/internal/kst"
 	"github.com/fifi/internal/market/facts"
 )
 
@@ -86,14 +87,16 @@ var _ = Describe("Facts Observation Store & Resolve", func() {
 			store := newMemoryStore()
 			ctx := context.Background()
 			val := 28.5
+			observed := time.Now()
 
 			obs := facts.Resolve(ctx, store, "vkospi.value", 7*24*time.Hour, func(c context.Context) (facts.Observation, error) {
 				return facts.Observation{
-					MetricID:     "vkospi.value",
-					Value:        &val,
-					Source:       "KIS",
-					BusinessDate: "20260821",
-					ObservedAt:   time.Now(),
+					ProvenanceVersion: facts.CurrentProvenanceVersion,
+					MetricID:          "vkospi.value",
+					Value:             &val,
+					Source:            "KIS",
+					BusinessDate:      observed.In(kst.Location).Format("20060102"),
+					ObservedAt:        observed,
 				}, nil
 			})
 
@@ -114,12 +117,13 @@ var _ = Describe("Facts Observation Store & Resolve", func() {
 			yesterday := time.Now().Add(-24 * time.Hour)
 
 			_ = store.Put(ctx, facts.Observation{
-				MetricID:        "vkospi.value",
-				Value:           &prevVal,
-				Source:          "KIS",
-				BusinessDate:    "20260820",
-				ObservedAt:      yesterday,
-				FreshnessStatus: "VALID",
+				ProvenanceVersion: facts.CurrentProvenanceVersion,
+				MetricID:          "vkospi.value",
+				Value:             &prevVal,
+				Source:            "KIS",
+				BusinessDate:      yesterday.In(kst.Location).Format("20060102"),
+				ObservedAt:        yesterday,
+				FreshnessStatus:   "VALID",
 			})
 
 			obs := facts.Resolve(ctx, store, "vkospi.value", 7*24*time.Hour, func(c context.Context) (facts.Observation, error) {
@@ -130,7 +134,7 @@ var _ = Describe("Facts Observation Store & Resolve", func() {
 			Expect(*obs.Value).To(Equal(27.8))
 			Expect(obs.Source).To(Equal("KIS"))
 			Expect(obs.ObservedAt).To(Equal(yesterday))
-			Expect(obs.MissingReason).To(ContainSubstring("20260820"))
+			Expect(obs.MissingReason).To(ContainSubstring(yesterday.In(kst.Location).Format("20060102")))
 		})
 
 		It("returns UNAVAILABLE when fetch fails and store has no recent observations", func() {

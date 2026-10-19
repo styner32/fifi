@@ -31,19 +31,25 @@ func Resolve(
 			if obs.MetricID == "" {
 				obs.MetricID = metricID
 			}
+			if !AcceptedAt(obs, time.Now()) {
+				fetchErr = fmt.Errorf("unverified provenance, value, business date or source timestamp")
+			} else {
 
-			if store != nil {
-				_ = store.Put(ctx, obs)
+				if store != nil {
+					_ = store.Put(ctx, obs)
+				}
+				return obs
 			}
-			return obs
 		}
-		fetchErr = err
+		if err != nil {
+			fetchErr = err
+		}
 	}
 
 	// Fallback to store
 	if store != nil {
 		latest, err := store.LatestValid(ctx, metricID, maxAge)
-		if err == nil && latest != nil && latest.Value != nil {
+		if err == nil && latest != nil && AcceptedAt(*latest, time.Now()) {
 			result := *latest
 			result.FreshnessStatus = "PROVISIONAL_LAST_VALID"
 			result.RetrievedAt = time.Now()

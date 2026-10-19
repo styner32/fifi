@@ -1,0 +1,9 @@
+# Build with make mcp-build, then use this single local server entry.
+# Replace previous market/disclosure MCP entries with this one fifi entry.
+# Change both paths if the checkout lives elsewhere. Secrets belong in .env or
+# the local process environment, never in tool arguments or this example.
+[mcp_servers.fifi]
+command = "/Users/sunjinlee/workspace/fifi/bin/fifi-mcp"
+cwd = "/Users/sunjinlee/workspace/fifi"
+startup_timeout_sec = 20
+tool_timeout_sec = 150

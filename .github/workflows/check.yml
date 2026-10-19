@@ -1,0 +1,62 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18.6-alpine3.24
+        env:
+          POSTGRES_USER: fifi_test
+          POSTGRES_DB: fifi_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fifi_test -d fifi_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:8.10.2-trixie
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://fifi_test@127.0.0.1:5432/fifi_test?sslmode=disable
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: true
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm install --global npm@12.2.0
+      - run: npm --prefix web ci
+      - name: Migrate isolated test database
+        run: make migrate-test-up
+      - run: make check
+      - name: Race checks
+        run: make test-race
+      - run: make audit
+      - run: make build
+      - name: Container builds
+        run: |
+          docker build -f Dockerfile_dart_filing_api -t fifi-api:ci .
+          docker build -f Dockerfile_dart_filing_worker -t fifi-worker:ci .
+          docker build -f Dockerfile_market_collector -t fifi-collector:ci .

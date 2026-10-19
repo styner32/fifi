@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:18-alpine
+    image: postgres:18.6-alpine3.24
     environment:
       - "POSTGRES_HOST_AUTH_METHOD=trust"
       - "POSTGRES_USER=sunjinlee"
@@ -11,22 +11,79 @@ services:
       - "5433:5432"
     networks:
       - open-trading-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sunjinlee -d dart"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   redis:
-    image: redis/redis-stack-server:7.4.0-v8
+    image: redis:8.10.2-trixie
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -f /data/.fifi-redis8-ready ]; then
+          printf '%s\n' 'Redis data is not prepared. Run make services-up or make redis-prepare first; the original redis-data volume will be preserved.' >&2
+          exit 64
+        fi
+        appendonly="$$(cat /data/.fifi-redis8-appendonly 2>/dev/null || true)"
+        case "$$appendonly" in
+          yes|no) ;;
+          *) printf '%s\n' 'Missing or invalid Redis persistence mode; prepare a fresh clone from the original source.' >&2; exit 64 ;;
+        esac
+        # Legacy Stack AOF files can belong to a different UID. Only the cloned
+        # volume is writable here; never follow copied symlinks when fixing it.
+        if [ "$$(id -u)" = 0 ]; then
+          chown -hR redis:redis /data
+        fi
+        exec /usr/local/bin/docker-entrypoint.sh redis-server --appendonly "$$appendonly"
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      - redis-data-v8:/data
     networks:
       - open-trading-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Internal helper, driven by scripts/prepare_local_redis.rb.
+  # It never changes the original volume or replaces a nonempty target.
+  redis-data-clone:
+    image: alpine:3.24.2
+    profiles: ["local-init"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$${REDIS_APPENDONLY:-}" in
+          yes|no) ;;
+          *) printf '%s\n' 'Run make redis-prepare to detect the local persistence mode before copying data.' >&2; exit 64 ;;
+        esac
+        if [ "$$REDIS_APPENDONLY" = yes ] && [ ! -f /source/appendonlydir/appendonly.aof.manifest ] && [ ! -f /source/appendonly.aof ]; then
+          printf '%s\n' 'Cannot prepare Redis: the expected AOF persistence files are missing.' >&2
+          exit 64
+        fi
+        if [ -n "$$(find /target -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+          printf '%s\n' 'Refusing to overwrite a nonempty Redis 8 target volume. Both Redis volumes have been preserved.' >&2
+          exit 64
+        fi
+        cp -a /source/. /target/
+        printf '%s\n' "$$REDIS_APPENDONLY" > /target/.fifi-redis8-appendonly
+        touch /target/.fifi-redis8-ready
+        printf '%s\n' 'Redis data copied to the separate Redis 8 volume. Keep the original volume for rollback.'
+    volumes:
+      - redis-data:/source:ro
+      - redis-data-v8:/target
 
   dart-filing-worker:
     build:
       context: .
       dockerfile: Dockerfile_dart_filing_worker
     env_file:
-      - .env.docker
+      - path: .env.docker
+        required: false
     networks:
       - open-trading-network
     depends_on:
@@ -40,7 +97,8 @@ services:
     ports:
       - "8080:8080"
     env_file:
-      - .env.docker
+      - path: .env.docker
+        required: false
     networks:
       - open-trading-network
     depends_on:
@@ -52,7 +110,8 @@ services:
       context: .
       dockerfile: Dockerfile_market_collector
     env_file:
-      - .env.docker
+      - path: .env.docker
+        required: false
     networks:
       - open-trading-network
     depends_on:
@@ -66,3 +125,4 @@ networks:
 volumes:
   db-volume:
   redis-data:
+  redis-data-v8:

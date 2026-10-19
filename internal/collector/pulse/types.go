@@ -9,6 +9,7 @@ import (
 	"github.com/fifi/internal/domesticstock"
 	"github.com/fifi/internal/external/naver"
 	"github.com/fifi/internal/external/yahoo"
+	"github.com/fifi/internal/market/calendar"
 )
 
 // DomesticStock는 펄스에 필요한 KIS 국내 주식 API 인터페이스.
@@ -53,11 +54,12 @@ type Deps struct {
 
 // Options는 runIntradayPulse에서 파싱된 실행 옵션.
 type Options struct {
-	StoreDir  string
-	Lookback  time.Duration // 기본 2h
-	NoSave    bool
-	NoHistory bool // 이전 적립/누적 레코드 미사용 (독립 실행 및 디버깅용)
-	JSON      bool
+	StoreDir    string
+	Lookback    time.Duration // 기본 2h
+	NoSave      bool
+	NoHistory   bool // 이전 적립/누적 레코드 미사용 (독립 실행 및 디버깅용)
+	CurrentOnly bool // 현재 관측만 제공; 비교 이력 읽기·적립 및 구간 변화 제외
+	JSON        bool
 }
 
 // FlowSnapshot은 KIS inquire-investor-time-by-market 1행 파싱 결과 (단위: 억원).
@@ -320,6 +322,8 @@ type PulseAssessment struct {
 
 // Pulse는 전체 펄스 수집 결과.
 type Pulse struct {
+	CurrentOnly              bool
+	Session                  calendar.Session
 	Now                      time.Time
 	Date                     string // KST YYYYMMDD
 	BusinessDate             string
@@ -359,11 +363,12 @@ type Pulse struct {
 
 // PulseRecord는 JSONL에 적립되는 한 줄 레코드.
 type PulseRecord struct {
-	SchemaVersion int        `json:"schema_version"`
-	KOSPIIndex    IndexLevel `json:"kospi_index"`
-	KOSDAQIndex   IndexLevel `json:"kosdaq_index"`
-	FX            Window     `json:"fx"`
-	Macro         []Window   `json:"macro"`
+	Session       calendar.Session `json:"session"`
+	SchemaVersion int              `json:"schema_version"`
+	KOSPIIndex    IndexLevel       `json:"kospi_index"`
+	KOSDAQIndex   IndexLevel       `json:"kosdaq_index"`
+	FX            Window           `json:"fx"`
+	Macro         []Window         `json:"macro"`
 
 	TS              time.Time            `json:"ts"`
 	BusinessDate    string               `json:"business_date,omitempty"`

@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"fmt"
+	"github.com/fifi/internal/market/calendar"
 	"math"
 	"os"
 	"time"
@@ -12,6 +13,9 @@ import (
 
 // Collect는 전체 펄스를 수집하고 적립합니다.
 func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
+	if opts.CurrentOnly {
+		opts.NoHistory, opts.NoSave = true, true
+	}
 	now := deps.Clock()
 	nowKST := now.In(kstLocation)
 	date := nowKST.Format("20060102")
@@ -24,6 +28,8 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 		Errors:       map[string]string{},
 		StoreDir:     storeDir,
 	}
+	provider, _ := deps.Stock.(calendar.TradingDayProvider)
+	pulse.Session = calendar.ResolveKRXSession(ctx, provider, now)
 	if businessDate, err := resolveBusinessDate(ctx, deps.Stock, date); err != nil {
 		pulse.Errors["market_time"] = err.Error()
 	} else {
@@ -260,16 +266,33 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 	pulse.BasisDeltaAnchor = basisDeltaAnchor
 	pulse.VKOSPI = vkospi
 	pulse.Safety = buildMarketSafety(now, date, kospiIdx, kosdaqIdx, kospi200Future, kosdaq150Future, records)
+	if pulse.Session.ClosedDay() {
+		for i := range pulse.Safety.Devices {
+			d := &pulse.Safety.Devices[i]
+			if d.Verification != "OFFICIAL" {
+				d.State, d.EligibleNow, d.ConditionObservedAt, d.EligibilityReason = "NOT_ELIGIBLE", false, "", pulse.Session.Phase
+			}
+		}
+	}
 	pulse.Contributions = contributions
 	pulse.USDKRW = usdkrw
 	pulse.Macro = macroWins
 
 	// ── 7. 분석 ────────────────────────────────────────────────────────────
-	pulse.Analysis = Analyze(pulse)
+	if opts.CurrentOnly {
+		pulse.SetCurrentOnly()
+	} else {
+		pulse.Analysis = Analyze(pulse)
+	}
 
 	// ── 8. 적립 (--no-save가 아닌 경우) ────────────────────────────────────
+	if err := ctx.Err(); err != nil {
+		pulse.Errors["context"] = err.Error()
+		return pulse
+	}
 	if !opts.NoSave {
 		rec := PulseRecord{
+			Session:       pulse.Session,
 			SchemaVersion: 2, KOSPIIndex: kospiIdx, KOSDAQIndex: kosdaqIdx, FX: usdkrw, Macro: macroWins, Safety: pulse.Safety, Assessment: pulse.Assessment,
 			TS:              now,
 			BusinessDate:    pulse.BusinessDate,

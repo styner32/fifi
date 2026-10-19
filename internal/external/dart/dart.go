@@ -48,6 +48,7 @@ type Company struct {
 	CorpCode    string `xml:"corp_code"`
 	CorpName    string `xml:"corp_name"`
 	CorpEngName string `xml:"corp_eng_name"`
+	StockCode   string `xml:"stock_code"` // 6-digit listed ticker; blank (" ") for unlisted corps
 	ModifyDate  string `xml:"modify_date"`
 }
 
@@ -106,12 +107,21 @@ func (c *DartClient) getDisclosureList(corpCode, bgnDe, endDe string, pageNo, pa
 		return nil, err
 	}
 
+	if out.Status == statusNoData {
+		// No disclosures in the requested window is a normal, empty result.
+		out.List = nil
+		return &out, nil
+	}
+
 	if out.Status != "000" { // 000: 정상
 		return nil, fmt.Errorf("DART error %s: %s", out.Status, out.Message)
 	}
 
 	return &out, nil
 }
+
+// statusNoData is DART's "013: 조회된 데이타가 없습니다." response status.
+const statusNoData = "013"
 
 // 공시서류원본파일
 // https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS001&apiId=2019003

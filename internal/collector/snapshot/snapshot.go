@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/fifi/internal/kst"
+	"github.com/fifi/internal/market/calendar"
 	"strings"
 	"time"
 )
@@ -24,6 +25,8 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 		return s
 	}
 	historical := date != now.Format("20060102")
+	provider, _ := deps.DomesticStock.(calendar.TradingDayProvider)
+	s.Session = calendar.ResolveKRXSession(ctx, provider, now)
 	s.SessionStatus = "INTRADAY_PROVISIONAL"
 	if historical {
 		s.SessionStatus = "HISTORICAL_DATED_DATA_ONLY"
@@ -32,8 +35,13 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 	} else if now.Hour()*60+now.Minute() >= 930 {
 		s.SessionStatus = "POST_CLOSE_UNRECONCILED"
 	}
+	if !historical && s.Session.ClosedDay() {
+		s.SessionStatus = "NON_TRADING_DAY"
+	}
 	opts.AsOf = now
-	if historical {
+	excludeCurrent := historical || s.Session.ClosedDay()
+	opts.ExcludeCurrent = excludeCurrent
+	if excludeCurrent {
 		deps.Yahoo = nil
 		deps.Naver = nil
 		deps.DomesticFuture = nil
@@ -66,7 +74,7 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 	if s.Flow != nil {
 		s.Flow.Status = s.SessionStatus
 	}
-	if !historical {
+	if !excludeCurrent {
 		s.Cumulative = collectCumulative(ctx, deps.DomesticStock, date, opts)
 	}
 	// Section 7: 변동성
@@ -84,12 +92,12 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Snapshot {
 	// Section 9: 매크로 채널/Regime
 	s.Regime = collectRegime(ctx, deps.Yahoo, s.Price, s.Volatility, s.Impact, s.Macro, s.Credit)
 	// Section 10: 집중도 (KOSPI 마스터 재사용)
-	if !historical {
+	if !excludeCurrent {
 		s.Concentration = collectConcentration(ctx, deps.DomesticStock, date)
 	}
 
 	// Section 11: 막판 수급 및 Capitulation 분석
-	if historical {
+	if excludeCurrent {
 		s.Errors["late_session"] = fmt.Errorf("current-only endpoints excluded from historical report")
 	} else if section, err := collectLateSession(ctx, deps, date, s.Price, opts); err != nil {
 		s.Errors["late_session"] = err

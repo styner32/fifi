@@ -10,23 +10,20 @@ interface CompanySelectProps {
 }
 
 export function CompanySelect({ onSelect, selectedCompany, placeholder = "Search company..." }: CompanySelectProps) {
-  const [query, setQuery] = useState('');
+  const selectedName = selectedCompany
+    ? getFieldValue<string>(selectedCompany as unknown as Record<string, unknown>, "CorpName", "corp_name", "name") || ""
+    : "";
+  const [query, setQuery] = useState(selectedName);
+  const [previousSelection, setPreviousSelection] = useState(selectedCompany);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Sync internal query with selected company if needed
-  useEffect(() => {
-    if (selectedCompany) {
-      const name = getFieldValue<string>(selectedCompany as unknown as Record<string, unknown>, "CorpName", "corp_name", "name") || "";
-      setQuery(name);
-    } else {
-       // Only clear query if we don't have an active search intent? 
-       // Actually, keeping query helps if user just deselected. 
-       // But if external force cleared selection, maybe we should clear query or keep it?
-       // For now, let's strictly sync only when selected.
-    }
-  }, [selectedCompany]);
+  // Adjust local input before committing a changed external selection.
+  if (previousSelection !== selectedCompany) {
+    setPreviousSelection(selectedCompany);
+    if (selectedCompany) setQuery(selectedName);
+  }
 
   useEffect(() => {
     const fetchCompanies = async () => {

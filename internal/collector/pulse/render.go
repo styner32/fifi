@@ -1,7 +1,9 @@
 package pulse
 
 import (
+	"context"
 	"fmt"
+	"github.com/fifi/internal/market/calendar"
 	"math"
 	"strings"
 	"time"
@@ -22,7 +24,9 @@ func Render(p *Pulse) string {
 	if storeDir == "" {
 		storeDir = ".cache/pulse"
 	}
-	if p.StoredCount > 0 && p.PrevTS != nil {
+	if p.CurrentOnly {
+		storeInfo = "현재 관측 전용 · 이력 비교 제외"
+	} else if p.StoredCount > 0 && p.PrevTS != nil {
 		prevKST := p.PrevTS.In(kstLocation)
 		storeInfo = fmt.Sprintf("당일 적립 %d회 · 직전 %s", p.StoredCount, prevKST.Format("2006-01-02 15:04:05 KST"))
 	} else if p.StoredCount > 0 {
@@ -31,21 +35,28 @@ func Render(p *Pulse) string {
 		storeInfo = "비교 이력 없음 (1h/2h 수급 변화 N/A)"
 	}
 
-	isHoliday := IsHoliday("KRX", nowKST.Format("20060102"))
-	phase := GetMarketPhase("KRX", p.Now, isHoliday)
+	session := p.Session
+	if session.Status == "" {
+		session = calendar.ResolveKRXSession(context.Background(), nil, p.Now)
+	}
+	phase := session.Phase
 
 	b.WriteString(fmt.Sprintf("🫀 시장 펄스  %s   (%s)\n",
 		nowKST.Format(kstLayout), storeInfo))
-	b.WriteString(fmt.Sprintf("📊 국내 거래소 세션 상태: %s\n", phase))
+	b.WriteString(fmt.Sprintf("📊 국내 거래소 세션 상태: %s\n  %s\n", session.Label(), session.Reason))
 	if phase == "CLOSING_AUCTION" {
 		b.WriteString("⚠️  장 마감 동시호가 진행 중 (15:20 ~ 15:30) · 실시간 지수 변동은 체결 분봉 생성 시점까지 지연될 수 있습니다.\n")
 	}
 	b.WriteString("\n")
 
 	// ── 1. 지수 ───────────────────────────────────────────────────────────────
-	b.WriteString("📈 지수 (전일대비 · 최근1h/2h)\n")
-	renderMarketIndex(&b, p.KOSPI)
-	renderMarketIndex(&b, p.KOSDAQ)
+	if p.CurrentOnly {
+		b.WriteString("📈 지수 (현재값 · 전일대비)\n")
+	} else {
+		b.WriteString("📈 지수 (전일대비 · 최근1h/2h)\n")
+	}
+	renderMarketIndex(&b, p.KOSPI, p.CurrentOnly)
+	renderMarketIndex(&b, p.KOSDAQ, p.CurrentOnly)
 	b.WriteString("\n")
 
 	// ── 2. 시장 안전장치 ───────────────────────────────────────────────────
@@ -54,7 +65,11 @@ func Render(p *Pulse) string {
 	b.WriteString("\n")
 
 	// ── 3. 수급 ───────────────────────────────────────────────────────────────
-	b.WriteString("💰 수급 현황 (누적 및 델타 분리)\n")
+	if p.CurrentOnly {
+		b.WriteString("💰 수급 현황 (현재 누적값)\n")
+	} else {
+		b.WriteString("💰 수급 현황 (누적 및 델타 분리)\n")
+	}
 	renderMarketFlow(&b, p.KOSPI)
 	renderMarketFlow(&b, p.KOSDAQ)
 	b.WriteString("\n")
@@ -86,16 +101,20 @@ func Render(p *Pulse) string {
 
 	// ── 7. 환율 ───────────────────────────────────────────────────────────────
 	b.WriteString("💱 환율\n")
-	renderWindowLine(&b, "  원/달러 (Yahoo KRW=X)", p.USDKRW)
+	renderWindowLine(&b, "  원/달러 (Yahoo KRW=X)", p.USDKRW, p.CurrentOnly)
 	b.WriteString("\n")
 
 	// ── 8. 미국선물·매크로 ────────────────────────────────────────────────────
-	b.WriteString("🌐 미국선물·매크로 (최근1h/2h)\n")
+	if p.CurrentOnly {
+		b.WriteString("🌐 미국선물·매크로 (현재값 · 전일대비)\n")
+	} else {
+		b.WriteString("🌐 미국선물·매크로 (최근1h/2h)\n")
+	}
 	for _, w := range p.Macro {
 		if w.Symbol == "^TNX" {
-			renderYieldLine(&b, "  "+w.Label, w)
+			renderYieldLine(&b, "  "+w.Label, w, p.CurrentOnly)
 		} else {
-			renderWindowLine(&b, "  "+w.Label, w)
+			renderWindowLine(&b, "  "+w.Label, w, p.CurrentOnly)
 		}
 	}
 	b.WriteString("\n")
@@ -119,7 +138,9 @@ func Render(p *Pulse) string {
 		b.WriteString("\n")
 	}
 
-	if p.Saved {
+	if p.CurrentOnly {
+		b.WriteString("💾 관측 이력 적립 안 함\n")
+	} else if p.Saved {
 		b.WriteString(fmt.Sprintf("💾 %s/pulse_%s.jsonl (+1행) · pulse_%s.md 갱신\n", storeDir, p.Date, p.Date))
 	} else {
 		b.WriteString(fmt.Sprintf("💾 저장 안 함 · 대상 경로 %s/pulse_%s.jsonl\n", storeDir, p.Date))
@@ -128,7 +149,7 @@ func Render(p *Pulse) string {
 	return b.String()
 }
 
-func renderMarketIndex(b *strings.Builder, m Market) {
+func renderMarketIndex(b *strings.Builder, m Market, currentOnly bool) {
 	idx := m.Index
 	if !idx.OK {
 		b.WriteString(fmt.Sprintf("  %-7s  데이터 없음\n", m.Name))
@@ -144,12 +165,16 @@ func renderMarketIndex(b *strings.Builder, m Market) {
 		tradingStr = fmt.Sprintf("   거래대금 %s", fmtAmountEok(idx.TradingValue))
 	}
 
-	b.WriteString(fmt.Sprintf("  %-7s %9.2f  %s%s%%   1h %s  2h %s%s\n",
-		m.Name, idx.Price,
-		arrowNeutral(idx.ChangePct), fmt.Sprintf("%.2f", idx.ChangePct),
-		win1h, win2h,
-		tradingStr,
-	))
+	if currentOnly {
+		b.WriteString(fmt.Sprintf("  %-7s %9.2f  %s%.2f%%%s\n", m.Name, idx.Price, arrowNeutral(idx.ChangePct), idx.ChangePct, tradingStr))
+	} else {
+		b.WriteString(fmt.Sprintf("  %-7s %9.2f  %s%s%%   1h %s  2h %s%s\n",
+			m.Name, idx.Price,
+			arrowNeutral(idx.ChangePct), fmt.Sprintf("%.2f", idx.ChangePct),
+			win1h, win2h,
+			tradingStr,
+		))
+	}
 
 	if idx.Open > 0 {
 		b.WriteString(fmt.Sprintf("          시 %.2f / 고 %s / 저 %s",
@@ -388,7 +413,7 @@ func renderFlowDetail(b *strings.Builder, flow FlowSnapshot) {
 	))
 }
 
-func renderWindowLine(b *strings.Builder, label string, w Window) {
+func renderWindowLine(b *strings.Builder, label string, w Window, currentOnly bool) {
 	if !w.OK {
 		b.WriteString(fmt.Sprintf("%-22s  데이터 없음\n", label))
 		return
@@ -426,6 +451,10 @@ func renderWindowLine(b *strings.Builder, label string, w Window) {
 	if w.ChangeOK {
 		changeStr = fmtPct(w.ChangePct)
 	}
+	if currentOnly {
+		b.WriteString(fmt.Sprintf("%-22s  %10.4f  기준대비 %s%s%s%s\n", label, w.Current, changeStr, refStr, lastStr+" ["+w.Freshness+"]", reasonStr))
+		return
+	}
 	b.WriteString(fmt.Sprintf("%-22s  %10.4f  기준대비 %s%s   1h %s  2h %s%s%s\n",
 		label, w.Current,
 		changeStr,
@@ -436,7 +465,7 @@ func renderWindowLine(b *strings.Builder, label string, w Window) {
 	))
 }
 
-func renderYieldLine(b *strings.Builder, label string, w Window) {
+func renderYieldLine(b *strings.Builder, label string, w Window, currentOnly bool) {
 	if !w.OK {
 		b.WriteString(fmt.Sprintf("%-20s  데이터 없음\n", label))
 		return
@@ -464,6 +493,10 @@ func renderYieldLine(b *strings.Builder, label string, w Window) {
 	if w.Reason != "" {
 		reasonStr = fmt.Sprintf(" [%s]", w.Reason)
 	}
+	if currentOnly {
+		b.WriteString(fmt.Sprintf("%-20s  %7.3f%%  전일 %s%s%s\n", label, w.Current, toBP(change), lastStr+" ["+w.Freshness+"]", reasonStr))
+		return
+	}
 	b.WriteString(fmt.Sprintf("%-20s  %7.3f%%  전일 %s   1h %s  2h %s%s%s\n",
 		label, w.Current, toBP(change), toBP(w.Move1hPct), toBP(w.Move2hPct), lastStr+" ["+w.Freshness+"]", reasonStr))
 }
@@ -486,7 +519,11 @@ func PulseToMap(p *Pulse) map[string]any {
 		}
 		return map[string]any{"price": price, "change_pct": change, "ok": m.Index.OK, "index": m.Index, "window": m.IntradayWin, "move_1h": m.IntradayWin.Move1hPct, "move_2h": m.IntradayWin.Move2hPct, "flow": flow, "flow_delta_prev": m.FlowDeltaPrev, "flow_delta_first": m.FlowDeltaAnchor, "flow_delta_1h": m.FlowDelta1h, "flow_delta_2h": m.FlowDelta2h}
 	}
-	return map[string]any{"schema_version": 2, "ts": p.Now, "date": p.Date, "business_date": p.BusinessDate, "stored_count": p.StoredCount, "kospi": marketMap(p.KOSPI), "kosdaq": marketMap(p.KOSDAQ), "usdkrw": p.USDKRW, "macro": p.Macro, "market_safety": p.Safety, "program_trade": map[string]any{"kospi": p.KOSPIProgram, "kosdaq": p.KOSDAQProgram, "kospi_delta": p.KOSPIProgramDelta, "kosdaq_delta": p.KOSDAQProgramDelta}, "kospi200_future": p.KOSPI200Future, "kosdaq150_future": p.KOSDAQ150Future, "basis_delta_1h": p.BasisDelta1h, "basis_delta_2h": p.BasisDelta2h, "vkospi": p.VKOSPI, "kospi_contributions": p.Contributions, "assessment": p.Assessment, "analysis": p.Analysis, "errors": p.Errors}
+	report := map[string]any{"schema_version": 2, "ts": p.Now, "date": p.Date, "business_date": p.BusinessDate, "session": p.Session, "stored_count": p.StoredCount, "kospi": marketMap(p.KOSPI), "kosdaq": marketMap(p.KOSDAQ), "usdkrw": p.USDKRW, "macro": p.Macro, "market_safety": p.Safety, "program_trade": map[string]any{"kospi": p.KOSPIProgram, "kosdaq": p.KOSDAQProgram, "kospi_delta": p.KOSPIProgramDelta, "kosdaq_delta": p.KOSDAQProgramDelta}, "kospi200_future": p.KOSPI200Future, "kosdaq150_future": p.KOSDAQ150Future, "basis_delta_1h": p.BasisDelta1h, "basis_delta_2h": p.BasisDelta2h, "vkospi": p.VKOSPI, "kospi_contributions": p.Contributions, "assessment": p.Assessment, "analysis": p.Analysis, "errors": p.Errors}
+	if p.CurrentOnly {
+		report["comparison_mode"] = "CURRENT_ONLY"
+	}
+	return report
 }
 
 func observationLabel(ts, fetched time.Time, fresh string) string {

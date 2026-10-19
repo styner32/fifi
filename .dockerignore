@@ -1,0 +1,11 @@
+.git
+.cache
+.env
+.env.*
+.auth_token.json
+*.pem
+bin
+web/node_modules
+web/dist
+external
+**/*.log

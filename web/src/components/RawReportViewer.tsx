@@ -18,6 +18,7 @@ export function RawReportViewer({ corpCode, reportId }: RawReportViewerProps) {
 
   useEffect(() => {
     let active = true;
+    let objectUrl: string | undefined;
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -51,12 +52,16 @@ export function RawReportViewer({ corpCode, reportId }: RawReportViewerProps) {
 
         // Detect Type
         const lower = decoded.toLowerCase();
-        if (lower.includes("<html") || lower.includes("<body")) {
-            setContentType('html');
-        } else if (lower.startsWith("<?xml") || lower.includes("<xbrl")) {
-            setContentType('xml');
+        const type = lower.includes("<html") || lower.includes("<body")
+          ? 'html'
+          : lower.startsWith("<?xml") || lower.includes("<xbrl") ? 'xml' : 'text';
+        setContentType(type);
+        if (type === 'html' || type === 'xml') {
+          const blob = new Blob([decoded], { type: type === 'html' ? 'text/html' : 'text/xml' });
+          objectUrl = URL.createObjectURL(blob);
+          setObjUrl(objectUrl);
         } else {
-            setContentType('text');
+          setObjUrl(null);
         }
 
         setContent(decoded);
@@ -68,19 +73,11 @@ export function RawReportViewer({ corpCode, reportId }: RawReportViewerProps) {
     };
     
     if (corpCode && reportId) load();
-    return () => { active = false; };
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, [corpCode, reportId]);
-
-  // Create Object URL for Iframe
-  useEffect(() => {
-    if (content && (contentType === 'html' || contentType === 'xml')) {
-        const blob = new Blob([content], { type: contentType === 'html' ? 'text/html' : 'text/xml' });
-        const url = URL.createObjectURL(blob);
-        setObjUrl(url);
-        return () => URL.revokeObjectURL(url);
-    }
-    setObjUrl(null);
-  }, [content, contentType]);
 
   if (loading) return <div>Loading raw report...</div>;
   if (error) return <div className="error-state">{error}</div>;

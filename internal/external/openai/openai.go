@@ -143,14 +143,32 @@ type FileAnalyzer struct {
 }
 
 const (
-	defaultModel     = shared.ResponsesModel("gpt-5.6-luna")
+	// DefaultModel is used when neither an explicit model nor OPENAI_MODEL is set.
+	DefaultModel     = shared.ResponsesModel("gpt-6-luna")
 	PreviewByteLimit = 128 * 1024 // cap what we send to the model, 128KB
+
+	// ModelEnvKey overrides DefaultModel when set.
+	ModelEnvKey = "OPENAI_MODEL"
 )
 
 var (
 	// ErrMissingAPIKey is returned when OPENAI_API_KEY was not configured.
 	ErrMissingAPIKey = errors.New("OPENAI_API_KEY is not set")
 )
+
+// ResolveModel picks the model in priority order:
+// first non-empty explicit value, then OPENAI_MODEL, then DefaultModel.
+func ResolveModel(explicit ...shared.ResponsesModel) shared.ResponsesModel {
+	for _, m := range explicit {
+		if strings.TrimSpace(string(m)) != "" {
+			return shared.ResponsesModel(strings.TrimSpace(string(m)))
+		}
+	}
+	if envModel := strings.TrimSpace(os.Getenv(ModelEnvKey)); envModel != "" {
+		return shared.ResponsesModel(envModel)
+	}
+	return DefaultModel
+}
 
 // NewFileAnalyzerFromEnv builds a FileAnalyzer using the OPENAI_API_KEY env var.
 func NewFileAnalyzerFromEnv() (*FileAnalyzer, error) {
@@ -160,16 +178,12 @@ func NewFileAnalyzerFromEnv() (*FileAnalyzer, error) {
 	}
 
 	client := openai.NewClient(option.WithAPIKey(apiKey), option.WithHTTPClient(http.DefaultClient))
-	return &FileAnalyzer{client: &client, model: defaultModel}, nil
+	return &FileAnalyzer{client: &client, model: ResolveModel()}, nil
 }
 
 func NewFileAnalyzer(apiKey string, model ...shared.ResponsesModel) *FileAnalyzer {
 	client := openai.NewClient(option.WithAPIKey(apiKey), option.WithHTTPClient(http.DefaultClient))
-	if len(model) > 0 {
-		return &FileAnalyzer{client: &client, model: model[0]}
-	}
-
-	return &FileAnalyzer{client: &client, model: defaultModel}
+	return &FileAnalyzer{client: &client, model: ResolveModel(model...)}
 }
 
 // AnalyzeFile sends the file contents to the OpenAI Responses API and returns the

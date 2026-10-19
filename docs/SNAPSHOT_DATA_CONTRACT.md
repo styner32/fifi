@@ -48,3 +48,9 @@ Snapshot 및 KOFIA 회귀 테스트는 [공통 테스트 가이드](TESTING.md)�
 `internal/collector/snapshot/testdata/kis_20260915.json`은 인증 정보를 제외한 실제 KIS 응답의 관련 행이다. 고정 입력 회귀 검증은 날짜·부호·단위·우선주·전체 분모·잘못된 구간 앵커·결측·JSON 보존을 확인한다. KOFIA 테스트는 명시적 백만원 요청 응답과 같은 날짜 KIS 예탁금을 대조한다.
 
 공식 필드 참고: `external/open-trading-api/examples_llm/domestic_stock/investor_program_trade_today/`, `external/open-trading-api/stocks_info/종목마스터정보(코스피).h`. FreeSIS 원본은 https://freesis.kofia.or.kr/stat/FreeSIS.do?parentDivId=MSIS10000000000000&serviceId=STATSCU0100000060 이며 내부 화면 API는 변경될 수 있다.
+
+## Facts·시장 MCP 정비 (2026-10-18)
+
+Facts fallback은 provenance version 1, 실제 원자료 날짜·시각, 유효 수치·상태를 검증합니다. 기존 version 0 관측은 삭제하지 않고 정상 fallback에서 제외합니다. 백필은 schema 2 원본 시각·상태를 보존하며 15:30이나 수집 시각을 생성하지 않습니다.
+
+주말·확인된 휴장과 정규 시간 추정을 구분하는 세션 메타데이터를 JSON·화면에 포함합니다. 시장 MCP는 시장 snapshot만 저장하고 공시 동기화·OpenAI 분석을 실행하지 않습니다. CLI의 공시 후속 작업과 분리합니다. [MCP](MARKET_MCP.md), [이전·검증](MAINTENANCE.md)을 참고하세요.

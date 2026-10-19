@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/fifi/internal/fileio"
+	"github.com/fifi/internal/market/calendar"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 // SnapshotJSON은 JSON 직렬화용 구조체입니다.
 // Snapshot 내부의 에러 맵은 직렬화가 안 되므로 주요 수치만 포함합니다.
 type SnapshotJSON struct {
+	Session       calendar.Session      `json:"session"`
 	SchemaVersion int                   `json:"schema_version"`
 	SessionStatus string                `json:"session_status"`
 	CompletedAt   time.Time             `json:"completed_at"`
@@ -61,6 +63,7 @@ func (s *Snapshot) ToJSON() *SnapshotJSON {
 		date = s.Timestamp.Format("20060102")
 	}
 	j := &SnapshotJSON{
+		Session:       s.Session,
 		SchemaVersion: 2, SessionStatus: s.SessionStatus, CompletedAt: s.CompletedAt, Impact: s.Impact, Cumulative: s.Cumulative,
 		Timestamp:     s.Timestamp,
 		Date:          date,

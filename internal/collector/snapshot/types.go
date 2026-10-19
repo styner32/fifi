@@ -9,6 +9,7 @@ import (
 	"github.com/fifi/internal/domesticstock"
 	"github.com/fifi/internal/external/naver"
 	"github.com/fifi/internal/external/yahoo"
+	"github.com/fifi/internal/market/calendar"
 	"github.com/fifi/internal/market/facts"
 )
 
@@ -52,10 +53,11 @@ type Deps struct {
 	Yahoo          YahooQuotes
 	Naver          NaverFinance
 	KOFIA          KOFIAClient
-	Facts          facts.Store
+	Facts          facts.LatestValidReader
 }
 
 type Options struct {
+	ExcludeCurrent                 bool      // internal: closed day or historical report
 	AsOf                           time.Time // collection start; assigned by Collect
 	Date                           string
 	SidecarStatus                  string
@@ -167,6 +169,7 @@ type LateSessionSection struct {
 }
 
 type Snapshot struct {
+	Session       calendar.Session
 	BusinessDate  string
 	SessionStatus string
 	CompletedAt   time.Time
