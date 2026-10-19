@@ -156,6 +156,11 @@ func (s *Service) RunPremarket(ctx context.Context, opts premarket.Options) (res
 
 func (s *Service) RunPulse(ctx context.Context, opts pulse.Options) (result *Result, err error) {
 	result = emptyResult(IntradayPulse)
+	saveCurrentReport := opts.CurrentOnly && !opts.NoSave
+	if opts.CurrentOnly {
+		// Current-only calls may save standalone reports, never observation rows.
+		opts.NoHistory, opts.NoSave = true, true
+	}
 	ctx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
 	unlock, err := acquireLock(ctx, s.config.LockFile)
@@ -172,6 +177,9 @@ func (s *Service) RunPulse(ctx context.Context, opts pulse.Options) (result *Res
 	r, err := s.collectors.Pulse(ctx, opts)
 	if r == nil {
 		return failed(result, firstError(err, errors.New("intraday collector returned no report")))
+	}
+	if opts.CurrentOnly {
+		r.SetCurrentOnly()
 	}
 	result.Pulse = r
 	if e := result.setReport(pulse.PulseToMap(r)); e != nil {
@@ -195,7 +203,10 @@ func (s *Service) RunPulse(ctx context.Context, opts pulse.Options) (result *Res
 	if !available {
 		return failed(result, errors.New("no usable market observations; inspect report errors and missing-data statuses"))
 	}
-	if !opts.NoSave {
+	if saveCurrentReport {
+		name := "pulse_current." + r.Now.In(kst.Location).Format("20060102T150405.000000000")
+		result.persistPair(opts.StoreDir, name, pulse.PulseToMap(r))
+	} else if !opts.NoSave {
 		path := pulse.MDPath(opts, r.Date)
 		if e := writeAtomic(path, []byte(result.Markdown)); e != nil {
 			result.Envelope.Warnings = append(result.Envelope.Warnings, "Markdown save failed: "+e.Error())

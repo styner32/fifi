@@ -152,9 +152,6 @@ var _ = Describe("Portable market tool schemas", func() {
 			var args pulseArgs
 			Expect(json.Unmarshal(raw, &args)).To(Succeed())
 			Expect(args.UseHistory).To(Equal(expected))
-			if expected == nil {
-				Expect(args.UseHistory != nil && !*args.UseHistory).To(BeFalse())
-			}
 		},
 			Entry("absent", map[string]any{}, nil),
 			Entry("null", map[string]any{"use_history": nil}, nil),

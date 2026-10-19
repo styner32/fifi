@@ -4,6 +4,8 @@
 `make now-debug`는 같은 수집기를 `--no-history --no-save`로 실행한다.
 `make premarket`, `make takesnapshot`의 수집기는 별개다.
 
+MCP `market_intraday_pulse`는 같은 수집기의 현재 관측 모드를 사용한다. CLI 이력 사용·저장 동작과의 차이는 아래 [MCP 현재 관측 모드](#mcp-현재-관측-모드-2026-10-19)를 따른다.
+
 ## 2026-09-15 수정
 
 - KIS 업무 응답 성공 및 필수 숫자 파싱을 확인한다. 결측은 JSON `null`, 화면 `N/A`로 보존한다. 실제 응답에 있는 0은 유효한 값이다.
@@ -71,3 +73,12 @@ KIS 원본 필드 정의: [공식 샘플의 종목마스터정보(코스피).h](
 ## 공통 서비스·달력 정비 (2026-10-18)
 
 CLI와 시장 MCP가 같은 serializer와 저장 서비스를 사용합니다. 취소된 수집은 펄스 이력을 적립하지 않습니다. KIS 개장일 조회는 조회일별로 성공·실패를 캐시하며, 주말 `WEEKEND`, 확인된 휴장 `VERIFIED_CLOSED`, 정규 시간 추정 `ESTIMATED`를 구분합니다. 개장일 확인은 특별 거래시간·현재 정지 상태를 인증하지 않습니다. [유지보수](MAINTENANCE.md)를 참고하세요.
+
+## MCP 현재 관측 모드 (2026-10-19)
+
+- `market_intraday_pulse`는 호출할 때 현재 데이터를 새로 조회하며, `make now`의 `PULSE_OUTPUT_DIR` 관측 이력을 읽거나 추가하지 않는다. 기존 CLI 펄스 이력은 그대로 보존한다.
+- MCP 응답은 직전·당일 첫 수집·1h/2h 대비 관측 변화와 공급자 분봉 기반 장중 구간 변화를 제공하지 않는다. 현재값과 전일 대비 등락, 출처·관측 시각·조회 시각·결측 상태, 현재 안전장치 근거는 유지한다. 작성 시각과 원자료의 관측 시각은 계속 구분한다.
+- MCP 응답은 `report.comparison_mode=CURRENT_ONLY`를 추가한다. 기존 비교 필드는 출력 호환성을 위해 제거하지 않고 변화값·구간 기준 시각을 `null`로 유지한다. `stored_count`는 0이며 현재 관측값과 출처 메타데이터는 유지한다.
+- MCP 결과는 `MCP_PULSE_OUTPUT_DIR` (기본 `.cache/mcp/pulse`)에 KST 수집 시작 시각을 사용한 `pulse_current.YYYYMMDDTHHMMSS.NNNNNNNNN.{json,md}`로 저장한다. CLI의 JSONL 관측 이력과 별개이며, 이 보고서를 다음 MCP 호출의 비교 기준으로 읽지 않는다.
+- 기존 입력 `use_history`는 호환성을 위해 생략·`null`·`true`·`false`를 허용하지만 폐기 예정이며 값과 관계없이 현재 관측 모드를 사용한다. 새 호출은 `{}`를 사용한다.
+- `make now`의 이력 적립·구간 비교, `make now-debug`와 다른 시장 MCP 도구의 동작은 유지한다. 장중 구간 비교에 필요한 기준점·시각 검증 규칙은 CLI에 계속 적용한다.

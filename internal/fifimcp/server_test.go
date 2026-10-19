@@ -22,6 +22,8 @@ import (
 type combinedMarketCall struct {
 	kind              string
 	noSave, noHistory bool
+	currentOnly       bool
+	storeDir          string
 	date              string
 	save              bool
 }
@@ -41,7 +43,7 @@ func (runner *combinedRunner) RunPremarket(_ context.Context, options premarket.
 }
 
 func (runner *combinedRunner) RunPulse(_ context.Context, options pulse.Options) (*marketreport.Result, error) {
-	runner.calls <- combinedMarketCall{kind: marketreport.IntradayPulse, noSave: options.NoSave, noHistory: options.NoHistory}
+	runner.calls <- combinedMarketCall{kind: marketreport.IntradayPulse, noSave: options.NoSave, noHistory: options.NoHistory, currentOnly: options.CurrentOnly, storeDir: options.StoreDir}
 	return combinedMarketResult(marketreport.IntradayPulse), nil
 }
 
@@ -91,6 +93,7 @@ var _ = Describe("Unified Fifi MCP session", func() {
 	var requests chan combinedHTTPRequest
 
 	BeforeEach(func() {
+		GinkgoT().Setenv("MCP_PULSE_OUTPUT_DIR", "")
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 		DeferCleanup(cancel)
@@ -177,7 +180,7 @@ var _ = Describe("Unified Fifi MCP session", func() {
 				Expect(runner.calls).To(Receive(&call))
 				marketCalls = append(marketCalls, call)
 			}
-			Expect(marketCalls).To(Equal([]combinedMarketCall{{kind: marketreport.Premarket}, {kind: marketreport.IntradayPulse, noHistory: true}, {kind: marketreport.DailySnapshot, date: "20261015", save: true}}))
+			Expect(marketCalls).To(Equal([]combinedMarketCall{{kind: marketreport.Premarket}, {kind: marketreport.IntradayPulse, currentOnly: true, storeDir: ".cache/mcp/pulse"}, {kind: marketreport.DailySnapshot, date: "20261015", save: true}}))
 			var httpCalls []combinedHTTPRequest
 			for range 3 {
 				var request combinedHTTPRequest

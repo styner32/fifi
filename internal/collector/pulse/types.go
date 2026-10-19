@@ -54,11 +54,12 @@ type Deps struct {
 
 // Options는 runIntradayPulse에서 파싱된 실행 옵션.
 type Options struct {
-	StoreDir  string
-	Lookback  time.Duration // 기본 2h
-	NoSave    bool
-	NoHistory bool // 이전 적립/누적 레코드 미사용 (독립 실행 및 디버깅용)
-	JSON      bool
+	StoreDir    string
+	Lookback    time.Duration // 기본 2h
+	NoSave      bool
+	NoHistory   bool // 이전 적립/누적 레코드 미사용 (독립 실행 및 디버깅용)
+	CurrentOnly bool // 현재 관측만 제공; 비교 이력 읽기·적립 및 구간 변화 제외
+	JSON        bool
 }
 
 // FlowSnapshot은 KIS inquire-investor-time-by-market 1행 파싱 결과 (단위: 억원).
@@ -321,6 +322,7 @@ type PulseAssessment struct {
 
 // Pulse는 전체 펄스 수집 결과.
 type Pulse struct {
+	CurrentOnly              bool
 	Session                  calendar.Session
 	Now                      time.Time
 	Date                     string // KST YYYYMMDD

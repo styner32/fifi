@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"time"
 
 	"github.com/fifi/internal/collector/premarket"
@@ -43,6 +44,8 @@ var _ = Describe("Market MCP protocol", func() {
 			return &marketreport.Result{Envelope: marketreport.Envelope{SchemaVersion: 1, ReportType: kind, Report: map[string]any{"missing_value": nil, "status": "TRIGGER_HISTORY_UNKNOWN", "source": "fixture"}, Artifacts: []marketreport.Artifact{}, Warnings: []string{}}}
 		}
 		BeforeEach(func() {
+			GinkgoT().Setenv("MCP_PULSE_OUTPUT_DIR", "")
+			GinkgoT().Setenv("PULSE_OUTPUT_DIR", filepath.Join(GinkgoT().TempDir(), "shared-observations"))
 			ctx = context.Background()
 			runner = fakeRunner{premarket: func(context.Context, premarket.Options) (*marketreport.Result, error) {
 				return result("premarket"), nil
@@ -75,6 +78,13 @@ var _ = Describe("Market MCP protocol", func() {
 				Expect(tool.OutputSchema).NotTo(BeNil())
 				Expect(tool.Annotations.ReadOnlyHint).To(BeFalse())
 				Expect(*tool.Annotations.DestructiveHint).To(BeFalse())
+				if tool.Name == "market_intraday_pulse" {
+					Expect(tool.Description).To(ContainSubstring("without reading or appending observation history or returning interval deltas"))
+					Expect(tool.Description).To(ContainSubstring("Saves standalone JSON/Markdown reports and data caches"))
+					schema, err := json.Marshal(tool.InputSchema)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(string(schema)).To(ContainSubstring("Deprecated compatibility input; ignored"))
+				}
 			}
 			Expect(names).To(ConsistOf("market_premarket_report", "market_intraday_pulse", "market_daily_snapshot"))
 		})
@@ -104,10 +114,11 @@ var _ = Describe("Market MCP protocol", func() {
 			Expect(response.IsError).To(BeFalse())
 			Expect(response.Content[0].(*mcp.TextContent).Text).To(ContainSubstring(`"amount":9007199254740993`))
 		})
-		It("uses saving and existing history by default", func() {
+		It("saves current pulse reports separately and keeps dated snapshot saving unchanged", func() {
 			runner.pulse = func(_ context.Context, o pulse.Options) (*marketreport.Result, error) {
 				Expect(o.NoSave).To(BeFalse())
-				Expect(o.NoHistory).To(BeFalse())
+				Expect(o.CurrentOnly).To(BeTrue())
+				Expect(o.StoreDir).To(Equal(".cache/mcp/pulse"))
 				return result("intraday-pulse"), nil
 			}
 			runner.snapshot = func(_ context.Context, o snapshot.Options, save bool) (*marketreport.Result, error) {
@@ -123,9 +134,11 @@ var _ = Describe("Market MCP protocol", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(response.IsError).To(BeFalse())
 		})
-		DescribeTable("preserves nullable history input semantics", func(args map[string]any, noHistory bool) {
+		DescribeTable("ignores the deprecated nullable history input and always collects current evidence", func(args map[string]any) {
 			runner.pulse = func(_ context.Context, options pulse.Options) (*marketreport.Result, error) {
-				Expect(options.NoHistory).To(Equal(noHistory))
+				Expect(options.CurrentOnly).To(BeTrue())
+				Expect(options.NoSave).To(BeFalse())
+				Expect(options.StoreDir).To(Equal(".cache/mcp/pulse"))
 				return result("intraday-pulse"), nil
 			}
 			connect()
@@ -133,11 +146,40 @@ var _ = Describe("Market MCP protocol", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(response.IsError).To(BeFalse())
 		},
-			Entry("omitted uses history", map[string]any{}, false),
-			Entry("null uses history", map[string]any{"use_history": nil}, false),
-			Entry("true uses history", map[string]any{"use_history": true}, false),
-			Entry("false skips history", map[string]any{"use_history": false}, true),
+			Entry("omitted", map[string]any{}),
+			Entry("null", map[string]any{"use_history": nil}),
+			Entry("true", map[string]any{"use_history": true}),
+			Entry("false", map[string]any{"use_history": false}),
 		)
+		It("uses the dedicated MCP pulse directory override without changing other collectors", func() {
+			dir := filepath.Join(GinkgoT().TempDir(), "mcp-current")
+			GinkgoT().Setenv("MCP_PULSE_OUTPUT_DIR", "  "+dir+"  ")
+			runner.pulse = func(_ context.Context, options pulse.Options) (*marketreport.Result, error) {
+				Expect(options.CurrentOnly).To(BeTrue())
+				Expect(options.StoreDir).To(Equal(dir))
+				Expect(options.NoSave).To(BeFalse())
+				return result("intraday-pulse"), nil
+			}
+			runner.premarket = func(_ context.Context, options premarket.Options) (*marketreport.Result, error) {
+				Expect(options).To(Equal(premarket.Options{}))
+				return result("premarket"), nil
+			}
+			runner.snapshot = func(_ context.Context, options snapshot.Options, save bool) (*marketreport.Result, error) {
+				Expect(options).To(Equal(snapshot.Options{Date: "20261015"}))
+				Expect(save).To(BeTrue())
+				return result("market-snapshot"), nil
+			}
+			connect()
+			for _, call := range []mcp.CallToolParams{
+				{Name: "market_intraday_pulse", Arguments: map[string]any{"use_history": true}},
+				{Name: "market_premarket_report", Arguments: map[string]any{}},
+				{Name: "market_daily_snapshot", Arguments: map[string]any{"date": "20261015"}},
+			} {
+				response, err := session.CallTool(ctx, &call)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.IsError).To(BeFalse())
+			}
+		})
 		It("preserves null artifact and warning arrays in a valid report", func() {
 			runner.premarket = func(context.Context, premarket.Options) (*marketreport.Result, error) {
 				r := result("premarket")

@@ -13,6 +13,9 @@ import (
 
 // Collect는 전체 펄스를 수집하고 적립합니다.
 func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
+	if opts.CurrentOnly {
+		opts.NoHistory, opts.NoSave = true, true
+	}
 	now := deps.Clock()
 	nowKST := now.In(kstLocation)
 	date := nowKST.Format("20060102")
@@ -276,7 +279,11 @@ func Collect(ctx context.Context, deps Deps, opts Options) *Pulse {
 	pulse.Macro = macroWins
 
 	// ── 7. 분석 ────────────────────────────────────────────────────────────
-	pulse.Analysis = Analyze(pulse)
+	if opts.CurrentOnly {
+		pulse.SetCurrentOnly()
+	} else {
+		pulse.Analysis = Analyze(pulse)
+	}
 
 	// ── 8. 적립 (--no-save가 아닌 경우) ────────────────────────────────────
 	if err := ctx.Err(); err != nil {
