@@ -14,3 +14,7 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+## 2026-10-20 - [Insecure TLS] Fix InsecureSkipVerify for external APIs
+**Vulnerability:** The `http.Transport` for KOFIA FreeSIS was configured with `InsecureSkipVerify: true`, disabling TLS certificate verification and enabling Man-in-the-Middle (MitM) attacks.
+**Learning:** Instead of skipping verification entirely due to certificate issues, a secure approach involves embedding the required root or intermediate CA certificates into the Go binary using `go:embed` and using them to construct a custom `RootCAs` pool.
+**Prevention:** Never use `InsecureSkipVerify: true` in production for external APIs. Instead, obtain the required certificate, embed it within an internal `certs` package using `go:embed`, and initialize `tls.Config.RootCAs` by appending the embedded certificate to the system certificate pool (`x509.SystemCertPool()`).

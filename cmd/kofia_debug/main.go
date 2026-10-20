@@ -10,11 +10,21 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"time"
+
+	"github.com/fifi/internal/certs"
 )
 
 func main() {
 	jar, _ := cookiejar.New(nil)
-	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+
+	tlsConfig := &tls.Config{}
+	if pool, err := certs.GetKofiaRootCAs(); err == nil {
+		tlsConfig.RootCAs = pool
+	} else {
+		fmt.Printf("kofia_debug: warning: failed to load embedded certificates: %v\n", err)
+	}
+
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar, Transport: transport}
 	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 

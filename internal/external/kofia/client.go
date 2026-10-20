@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/fifi/internal/certs"
 	"github.com/fifi/internal/parse"
 	"io"
 	"math"
@@ -58,8 +59,16 @@ func NewClient(userAgent string) *Client {
 		userAgent = defaultUA
 	}
 	// FreeSIS uses a certificate that may fail verification in some environments.
+	tlsConfig := &tls.Config{}
+	if pool, err := certs.GetKofiaRootCAs(); err == nil {
+		tlsConfig.RootCAs = pool
+	} else {
+		// Fallback securely without skipping verification entirely
+		fmt.Printf("kofia: warning: failed to load embedded certificates: %v\n", err)
+	}
+
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: tlsConfig,
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},

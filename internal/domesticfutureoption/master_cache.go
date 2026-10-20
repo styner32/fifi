@@ -154,5 +154,3 @@ func normalizeBusinessDate(value string) string {
 	}
 	return value
 }
-
-

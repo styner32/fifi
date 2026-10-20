@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	expiredTokenMessageCode  = "EGW00123" // 토큰 만료
-	rateLimitMessageCode     = "EGW00201" // 초당 거래건수 초과
-	rateLimitRetryDelay      = 3 * time.Second
-	rateLimitMaxRetries      = 3
+	expiredTokenMessageCode = "EGW00123" // 토큰 만료
+	rateLimitMessageCode    = "EGW00201" // 초당 거래건수 초과
+	rateLimitRetryDelay     = 3 * time.Second
+	rateLimitMaxRetries     = 3
 )
 
 type RESTResponse struct {

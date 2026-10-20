@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	defaultUserAgent  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-	pollingBaseURL    = "https://polling.finance.naver.com"
-	siseBaseURL       = "https://finance.naver.com"
-	defaultTimeout    = 15 * time.Second
+	defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+	pollingBaseURL   = "https://polling.finance.naver.com"
+	siseBaseURL      = "https://finance.naver.com"
+	defaultTimeout   = 15 * time.Second
 )
 
 // IndexQuote holds snapshot data for a Naver Finance index.
@@ -36,7 +36,7 @@ type IndexQuote struct {
 
 // DailyClose holds a date + close price for historical data.
 type DailyClose struct {
-	Date  string  // "YYYY.MM.DD"
+	Date  string // "YYYY.MM.DD"
 	Close float64
 }
 
