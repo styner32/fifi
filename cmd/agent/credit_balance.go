@@ -56,15 +56,15 @@ type MarketLeveragePoint struct {
 	Date                    string  `json:"date"`
 	KOSPIPrice              float64 `json:"kospi_price"`
 	KOSPIChangePct          float64 `json:"kospi_change_pct"`
-	CreditBalanceTrillion   float64 `json:"credit_balance_trillion"`   // 신용융자 잔고 (조원)
+	CreditBalanceTrillion   float64 `json:"credit_balance_trillion"` // 신용융자 잔고 (조원)
 	CreditChangePct         float64 `json:"credit_change_pct"`
 	CreditSrc               string  `json:"credit_src"`                // "api" | "anchor" | "unreleased_t1"
 	CustomerDepositTrillion float64 `json:"customer_deposit_trillion"` // 투자자예탁금 (조원)
 	DepositChangePct        float64 `json:"deposit_change_pct"`
-	DepositSrc              string  `json:"deposit_src"`               // "api" | "anchor" | "unreleased_t1"
-	CreditToDepositPct      float64 `json:"credit_to_deposit_pct"`     // 신용잔고 ÷ 예탁금 (%) — 시스템 실질 레버리지
-	CreditToDepositChgP     float64 `json:"credit_to_deposit_chg_p"`   // %p 변동
-	HasDiscontinuity        bool    `json:"has_discontinuity"`         // 앵커-API 불연속 여부
+	DepositSrc              string  `json:"deposit_src"`             // "api" | "anchor" | "unreleased_t1"
+	CreditToDepositPct      float64 `json:"credit_to_deposit_pct"`   // 신용잔고 ÷ 예탁금 (%) — 시스템 실질 레버리지
+	CreditToDepositChgP     float64 `json:"credit_to_deposit_chg_p"` // %p 변동
+	HasDiscontinuity        bool    `json:"has_discontinuity"`       // 앵커-API 불연속 여부
 	HasT1Delay              bool    `json:"has_t1_delay"`
 	Diagnosis               string  `json:"diagnosis"`
 }
@@ -416,7 +416,7 @@ func runMarketLeverageRatio(args []string) error {
 		}
 		if i > 0 && !points[i-1].HasT1Delay {
 			prev := points[i-1]
-			points[i].KOSPIChangePct = math.Round((points[i].KOSPIPrice - prev.KOSPIPrice) / prev.KOSPIPrice * 10000) / 100
+			points[i].KOSPIChangePct = math.Round((points[i].KOSPIPrice-prev.KOSPIPrice)/prev.KOSPIPrice*10000) / 100
 
 			// Set step discontinuity only when actual data is missing
 			if points[i].CreditBalanceTrillion <= 0 || prev.CreditBalanceTrillion <= 0 ||
@@ -427,13 +427,13 @@ func runMarketLeverageRatio(args []string) error {
 			}
 
 			if points[i].CreditBalanceTrillion > 0 && prev.CreditBalanceTrillion > 0 {
-				points[i].CreditChangePct = math.Round((points[i].CreditBalanceTrillion - prev.CreditBalanceTrillion) / prev.CreditBalanceTrillion * 10000) / 100
+				points[i].CreditChangePct = math.Round((points[i].CreditBalanceTrillion-prev.CreditBalanceTrillion)/prev.CreditBalanceTrillion*10000) / 100
 			}
 			if points[i].CustomerDepositTrillion > 0 && prev.CustomerDepositTrillion > 0 {
-				points[i].DepositChangePct = math.Round((points[i].CustomerDepositTrillion - prev.CustomerDepositTrillion) / prev.CustomerDepositTrillion * 10000) / 100
+				points[i].DepositChangePct = math.Round((points[i].CustomerDepositTrillion-prev.CustomerDepositTrillion)/prev.CustomerDepositTrillion*10000) / 100
 			}
 			if points[i].CreditToDepositPct > 0 && prev.CreditToDepositPct > 0 {
-				points[i].CreditToDepositChgP = math.Round((points[i].CreditToDepositPct - prev.CreditToDepositPct) * 100) / 100
+				points[i].CreditToDepositChgP = math.Round((points[i].CreditToDepositPct-prev.CreditToDepositPct)*100) / 100
 			}
 
 			switch {

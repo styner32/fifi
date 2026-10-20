@@ -46,7 +46,7 @@ func decodeChartQuote(raw []byte) (*Quote, error) {
 	if name == "" {
 		name = strings.TrimSpace(meta.LongName)
 	}
-	
+
 	changePercent := 0.0
 	if meta.ChartPreviousClose != 0 {
 		changePercent = (meta.RegularMarketPrice - meta.ChartPreviousClose) / meta.ChartPreviousClose * 100.0

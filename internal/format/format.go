@@ -69,7 +69,6 @@ func EokPlain(v float64) string {
 	return Number(math.Round(v), 0)
 }
 
-
 // Arrow returns sign arrow indicator ("▲+", "▼", " ").
 func Arrow(v float64) string {
 	if v > 0 {

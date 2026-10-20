@@ -62,10 +62,10 @@ func (c *Client) GetQuotes(ctx context.Context, symbols []string) (map[string]Qu
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
-	
+
 	var mu sync.Mutex
 	quotes := make(map[string]Quote, len(cleanSymbols))
-	
+
 	for _, sym := range cleanSymbols {
 		symbol := sym // capture loop variable
 		g.Go(func() error {
@@ -75,7 +75,7 @@ func (c *Client) GetQuotes(ctx context.Context, symbols []string) (map[string]Qu
 				// The missingSymbolsError will handle it later.
 				return nil
 			}
-			
+
 			mu.Lock()
 			quotes[symbol] = *q
 			mu.Unlock()

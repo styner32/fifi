@@ -39,14 +39,14 @@ func appendReason(value string, reason string) string {
 }
 
 // Package-private delegates to formatting package
-func number(v float64, decimals int) string { return format.Number(v, decimals) }
+func number(v float64, decimals int) string       { return format.Number(v, decimals) }
 func signedNumber(v float64, decimals int) string { return format.Signed(v, decimals) }
-func percent(v float64) string { return format.Percent(v) }
-func percentPlain(v float64) string { return format.PercentPlain(v) }
-func eok(v float64) string { return format.Eok(v) }
-func eokPlain(v float64) string { return format.EokPlain(v) }
-func trillionFromEok(v float64) string { return format.TrillionFromEok(v) }
-func trillionFromEokPlain(v float64) string { return format.TrillionFromEokPlain(v) }
+func percent(v float64) string                    { return format.Percent(v) }
+func percentPlain(v float64) string               { return format.PercentPlain(v) }
+func eok(v float64) string                        { return format.Eok(v) }
+func eokPlain(v float64) string                   { return format.EokPlain(v) }
+func trillionFromEok(v float64) string            { return format.TrillionFromEok(v) }
+func trillionFromEokPlain(v float64) string       { return format.TrillionFromEokPlain(v) }
 
 func formatEokSmart(v float64) string {
 	parts := strings.Split(fmt.Sprintf("%.3f", v), ".")
@@ -69,4 +69,3 @@ func formatEokSmart(v float64) string {
 	}
 	return result.String()
 }
-
