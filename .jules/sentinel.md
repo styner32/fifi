@@ -14,3 +14,8 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+
+## 2025-03-09 - [Path Traversal in Dart Report Storing]
+**Vulnerability:** User-controlled values (`CorpCode` and `RceptNo`) were concatenated into file paths without proper sanitization (e.g. `fmt.Sprintf("data/receipts/%s", it.CorpCode)`). This allowed path traversal (CWE-22) where an attacker could use characters like `..` and `/` to read or overwrite files outside the intended directories.
+**Learning:** Functions like `fmt.Sprintf` do not provide directory security guarantees. Explicit validation and path sanitization are critical when saving remote/user-provided assets to disk.
+**Prevention:** Always validate path segments by ensuring they don't contain traversal characters (e.g. `/`, `\`, `..`), and use `filepath.Base` alongside `filepath.Clean` to strictly enforce that the final segment stays within the target directory boundary.

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -340,15 +341,30 @@ func (c *DartClient) GetList() error {
 	return nil
 }
 
+func IsValidPathName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	return true
+}
+
 // process doc
 func (c *DartClient) processDoc(it List) error {
-	folder := fmt.Sprintf("data/receipts/%s", it.CorpCode)
-	filename := fmt.Sprintf("%s/%s.html", folder, it.RceptNo)
+	if !IsValidPathName(it.CorpCode) || !IsValidPathName(it.RceptNo) {
+		return fmt.Errorf("invalid CorpCode or RceptNo for path traversal")
+	}
+	safeCorpCode := filepath.Base(filepath.Clean(it.CorpCode))
+	safeRceptNo := filepath.Base(filepath.Clean(it.RceptNo))
+	folder := filepath.Join("data", "receipts", safeCorpCode)
+	filename := filepath.Join(folder, safeRceptNo+".html")
 
 	// a file exists, skip and read the file
 	doc := ""
 	if _, err := os.Stat(filename); err == nil {
-		b, err := os.ReadFile(filename)
+		b, err := os.ReadFile(filepath.Clean(filename))
 		if err != nil {
 			return err
 		}
@@ -367,7 +383,7 @@ func (c *DartClient) processDoc(it List) error {
 			return err
 		}
 
-		f, err := os.Create(filename)
+		f, err := os.OpenFile(filepath.Clean(filename), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return err
 		}
@@ -386,6 +402,10 @@ func (c *DartClient) processDoc(it List) error {
 
 // store file in compact and markdown folders
 func StoreFiles(rawReport []byte, corpCode string) error {
+	if !IsValidPathName(corpCode) || strings.Contains(corpCode, "/") || strings.Contains(corpCode, "\\") || strings.Contains(corpCode, "..") {
+		return fmt.Errorf("invalid corpCode for path traversal")
+	}
+	safeCorpCode := filepath.Base(filepath.Clean(corpCode))
 	report, err := xbrl.ParseXBRL(rawReport)
 	if err != nil {
 		return err
@@ -396,7 +416,7 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 		return err
 	}
 
-	compactFolder := fmt.Sprintf("data/compact/%s", corpCode)
+	compactFolder := filepath.Join("data", "compact", safeCorpCode)
 
 	if _, err := os.Stat(compactFolder); err != nil {
 		if err := os.MkdirAll(compactFolder, 0o750); err != nil {
@@ -404,18 +424,18 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 		}
 	}
 
-	compactFilename := fmt.Sprintf("%s/%s.json", compactFolder, corpCode)
-	if err := os.WriteFile(compactFilename, j, 0o600); err != nil {
+	compactFilename := filepath.Join(compactFolder, safeCorpCode+".json")
+	if err := os.WriteFile(filepath.Clean(compactFilename), j, 0o600); err != nil {
 		return err
 	}
 
-	markdownFolder := fmt.Sprintf("data/markdowns/%s", corpCode)
+	markdownFolder := filepath.Join("data", "markdowns", safeCorpCode)
 	if _, err := os.Stat(markdownFolder); err != nil {
 		if err := os.MkdirAll(markdownFolder, 0o750); err != nil {
 			return err
 		}
 	}
 
-	markdownFilename := fmt.Sprintf("%s/%s.md", markdownFolder, corpCode)
-	return os.WriteFile(markdownFilename, []byte(xbrl.ReportToMarkdown(report)), 0o600)
+	markdownFilename := filepath.Join(markdownFolder, safeCorpCode+".md")
+	return os.WriteFile(filepath.Clean(markdownFilename), []byte(xbrl.ReportToMarkdown(report)), 0o600)
 }
