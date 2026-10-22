@@ -96,7 +96,7 @@ func runCreditBalance(args []string) error {
 
 	svc := domesticstock.NewService(client)
 	outDir := envDefault("CREDIT_BALANCE_OUTPUT_DIR", ".cache/credit_balance")
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
 		return err
 	}
 
@@ -129,7 +129,7 @@ func runCreditBalance(args []string) error {
 	if len(reports) > 0 {
 		path := fmt.Sprintf("%s/credit_balance.%s.json", outDir, date)
 		data, _ := json.MarshalIndent(reports, "", "  ")
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "[credit-balance] save error: %v\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "[credit-balance] saved: %s\n", path)

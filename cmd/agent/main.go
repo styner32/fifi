@@ -115,7 +115,7 @@ func runMarketSnapshot(args []string) error {
 				return fmt.Errorf("preserve previous Markdown: %w", err)
 			}
 		}
-		if err := os.WriteFile(mdPath, []byte(output), 0o644); err == nil {
+		if err := os.WriteFile(mdPath, []byte(output), 0o600); err == nil {
 			fmt.Fprintf(os.Stderr, "[snapshot] MD saved: %s\n", mdPath)
 		} else {
 			fmt.Fprintf(os.Stderr, "[snapshot] MD save failed: %v\n", err)
