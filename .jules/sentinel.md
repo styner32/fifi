@@ -14,3 +14,8 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+
+## 2025-03-09 - [Man-in-the-Middle Risk] InsecureSkipVerify Usage in HTTP Clients
+**Vulnerability:** `InsecureSkipVerify: true` was being used in TLS configurations (e.g., in KOFIA clients) to bypass certificate verification errors, exposing the application to Man-in-the-Middle (MitM) attacks.
+**Learning:** It is tempting to disable TLS verification for internal or unreliable external APIs (like FreeSIS) that present unrecognized or untrusted certificates, but this completely compromises channel security.
+**Prevention:** Never use `InsecureSkipVerify: true`. Instead, extract the necessary certificates, embed them securely in a shared package using `go:embed`, and append them to the system's `x509.CertPool` to initialize the `RootCAs` field in `tls.Config`. This restores secure verification without breaking handshakes.
