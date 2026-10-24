@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/fifi/internal/external/kofiacerts"
 	"github.com/fifi/internal/parse"
 	"io"
 	"math"
@@ -59,7 +60,9 @@ func NewClient(userAgent string) *Client {
 	}
 	// FreeSIS uses a certificate that may fail verification in some environments.
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{
+			RootCAs: kofiacerts.GetRootCAs(),
+		},
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},
