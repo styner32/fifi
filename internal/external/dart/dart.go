@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -342,8 +343,17 @@ func (c *DartClient) GetList() error {
 
 // process doc
 func (c *DartClient) processDoc(it List) error {
-	folder := fmt.Sprintf("data/receipts/%s", it.CorpCode)
-	filename := fmt.Sprintf("%s/%s.html", folder, it.RceptNo)
+	cleanCorpCode := filepath.Base(filepath.Clean(it.CorpCode))
+	cleanRceptNo := filepath.Base(filepath.Clean(it.RceptNo))
+	if cleanCorpCode == "." || cleanCorpCode == "/" || cleanCorpCode == "\\" {
+		return fmt.Errorf("invalid corp code")
+	}
+	if cleanRceptNo == "." || cleanRceptNo == "/" || cleanRceptNo == "\\" {
+		return fmt.Errorf("invalid receipt no")
+	}
+
+	folder := filepath.Join("data", "receipts", cleanCorpCode)
+	filename := filepath.Join(folder, cleanRceptNo+".html")
 
 	// a file exists, skip and read the file
 	doc := ""
@@ -396,7 +406,12 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 		return err
 	}
 
-	compactFolder := fmt.Sprintf("data/compact/%s", corpCode)
+	cleanCorpCode := filepath.Base(filepath.Clean(corpCode))
+	if cleanCorpCode == "." || cleanCorpCode == "/" || cleanCorpCode == "\\" {
+		return fmt.Errorf("invalid corp code")
+	}
+
+	compactFolder := filepath.Join("data", "compact", cleanCorpCode)
 
 	if _, err := os.Stat(compactFolder); err != nil {
 		if err := os.MkdirAll(compactFolder, 0o750); err != nil {
@@ -404,18 +419,18 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 		}
 	}
 
-	compactFilename := fmt.Sprintf("%s/%s.json", compactFolder, corpCode)
+	compactFilename := filepath.Join(compactFolder, cleanCorpCode+".json")
 	if err := os.WriteFile(compactFilename, j, 0o600); err != nil {
 		return err
 	}
 
-	markdownFolder := fmt.Sprintf("data/markdowns/%s", corpCode)
+	markdownFolder := filepath.Join("data", "markdowns", cleanCorpCode)
 	if _, err := os.Stat(markdownFolder); err != nil {
 		if err := os.MkdirAll(markdownFolder, 0o750); err != nil {
 			return err
 		}
 	}
 
-	markdownFilename := fmt.Sprintf("%s/%s.md", markdownFolder, corpCode)
+	markdownFilename := filepath.Join(markdownFolder, cleanCorpCode+".md")
 	return os.WriteFile(markdownFilename, []byte(xbrl.ReportToMarkdown(report)), 0o600)
 }
