@@ -14,3 +14,8 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+
+## 2025-03-09 - [Path Traversal in Dart Client]
+**Vulnerability:** File paths in `internal/external/dart/dart.go` were being constructed using `fmt.Sprintf` with unvalidated user input (`corpCode` and `rceptNo`), which could lead to Path Traversal vulnerabilities (CWE-22).
+**Learning:** `fmt.Sprintf` is frequently used for path construction but does not guarantee the file path stays within the intended directory if the inputs contain traversal characters like `../`.
+**Prevention:** Always use `filepath.Join()` for path concatenation, and sanitize user-provided file segments with `filepath.Base(filepath.Clean(input))` to ensure that they do not contain directory traversal characters.
