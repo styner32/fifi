@@ -14,3 +14,8 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+
+## 2025-03-09 - [TLS InsecureSkipVerify] Securely configure custom certificates
+**Vulnerability:** External API clients (like FreeSIS) used `InsecureSkipVerify: true` in their `tls.Config`. This completely disables certificate validation and exposes the application to Man-in-the-Middle (MitM) attacks.
+**Learning:** It is a common mistake to bypass TLS validation altogether when encountering certificate validation errors with internal or poorly configured external servers. However, this is critically insecure.
+**Prevention:** Instead of setting `InsecureSkipVerify: true`, obtain the required certificate, embed it in the repository (use `git add -f` if ignored), and load it into a custom `RootCAs` pool within the `tls.Config`. Always initialize this pool using `x509.SystemCertPool()` before appending custom certs to ensure system-wide trusted CAs are still recognized.
