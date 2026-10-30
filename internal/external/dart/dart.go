@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -396,7 +397,8 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 		return err
 	}
 
-	compactFolder := fmt.Sprintf("data/compact/%s", corpCode)
+	safeCorpCode := filepath.Clean(filepath.Base(corpCode))
+	compactFolder := filepath.Join("data/compact", safeCorpCode)
 
 	if _, err := os.Stat(compactFolder); err != nil {
 		if err := os.MkdirAll(compactFolder, 0o750); err != nil {
@@ -404,18 +406,18 @@ func StoreFiles(rawReport []byte, corpCode string) error {
 		}
 	}
 
-	compactFilename := fmt.Sprintf("%s/%s.json", compactFolder, corpCode)
+	compactFilename := filepath.Join(compactFolder, safeCorpCode+".json")
 	if err := os.WriteFile(compactFilename, j, 0o600); err != nil {
 		return err
 	}
 
-	markdownFolder := fmt.Sprintf("data/markdowns/%s", corpCode)
+	markdownFolder := filepath.Join("data/markdowns", safeCorpCode)
 	if _, err := os.Stat(markdownFolder); err != nil {
 		if err := os.MkdirAll(markdownFolder, 0o750); err != nil {
 			return err
 		}
 	}
 
-	markdownFilename := fmt.Sprintf("%s/%s.md", markdownFolder, corpCode)
+	markdownFilename := filepath.Join(markdownFolder, safeCorpCode+".md")
 	return os.WriteFile(markdownFilename, []byte(xbrl.ReportToMarkdown(report)), 0o600)
 }
