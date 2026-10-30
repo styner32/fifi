@@ -14,3 +14,7 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+\n## 2026-10-30 - [Path Traversal] Safe filepath construction
+**Vulnerability:** Constructing file paths directly with user input using string concatenation or `fmt.Sprintf` can lead to Path Traversal (CWE-22) vulnerabilities, allowing users to access files outside intended directories by injecting `../`.
+**Learning:** This occurs when standard file operations (e.g., `os.WriteFile`) are given an unvalidated path string.
+**Prevention:** Always extract the base filename from user input using `filepath.Base()`, clean it using `filepath.Clean()`, and construct the full path safely using `filepath.Join()`.
