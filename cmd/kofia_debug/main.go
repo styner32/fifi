@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,11 +11,18 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"time"
+
+	"github.com/fifi/internal/certs"
 )
 
 func main() {
 	jar, _ := cookiejar.New(nil)
-	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	pool.AppendCertsFromPEM(certs.KofiaCert)
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 	client := &http.Client{Timeout: 15 * time.Second, Jar: jar, Transport: transport}
 	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 
