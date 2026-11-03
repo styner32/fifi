@@ -52,12 +52,12 @@ func EnsureZipCache(ctx context.Context, client Doer, url, targetName, cachePath
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
 	tmpPath := cachePath + ".tmp"
-	if err := os.WriteFile(tmpPath, masterBytes, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, masterBytes, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, cachePath); err != nil {

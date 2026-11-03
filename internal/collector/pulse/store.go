@@ -22,11 +22,11 @@ func pulseMDPath(dir, date string) string {
 
 // AppendRecord는 PulseRecord를 JSONL에 한 줄 추가합니다.
 func AppendRecord(dir, date string, rec PulseRecord) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	path := pulseFilePath(dir, date)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
