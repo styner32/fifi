@@ -14,3 +14,7 @@
 **Vulnerability:** Files and directories were being created with overly permissive permissions (e.g., 0755 for directories and 0644 for files), which could expose sensitive data like token caches or downloaded reports to unauthorized users on the system.
 **Learning:** It is a common oversight to use default or common permissions without considering the sensitivity of the data being stored.
 **Prevention:** Always use strict permissions (e.g., 0o600 for files, 0o700/0o750 for directories) when creating files or directories that store sensitive information, as recommended by gosec.
+## 2026-11-06 - [Sentinel] Remove InsecureSkipVerify from KOFIA HTTP Client
+**Vulnerability:** The KOFIA API client (`internal/external/kofia/client.go`) disabled TLS verification globally for its transport by setting `InsecureSkipVerify: true`.
+**Learning:** This was likely a workaround because the `freesis.kofia.or.kr` endpoint uses a certificate that is not trusted by the default system certificate pool in some environments, leading to SSL handshake errors.
+**Prevention:** Rather than globally skipping certificate verification (which leaves connections vulnerable to MITM attacks), the specific required certificate should be embedded in the application and explicitly added to the HTTP client's RootCAs, falling back to the standard system pool for all other certificates.

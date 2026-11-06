@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/fifi/internal/cert"
 	"github.com/fifi/internal/parse"
 	"io"
 	"math"
@@ -57,9 +59,19 @@ func NewClient(userAgent string) *Client {
 	if userAgent == "" {
 		userAgent = defaultUA
 	}
+
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+
+	pool.AppendCertsFromPEM(cert.KofiaCertPEM)
+
 	// FreeSIS uses a certificate that may fail verification in some environments.
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{
+			RootCAs: pool,
+		},
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: defaultTimeout, Jar: jar, Transport: transport},
